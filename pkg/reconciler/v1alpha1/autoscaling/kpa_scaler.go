@@ -84,14 +84,22 @@ func (ks *kpaScaler) getAutoscalerConfig() *autoscaler.Config {
 	return ks.autoscalerConfig.DeepCopy()
 }
 
-// Scale attempts to scale the given KPA's target reference to the desired scale.
-func (rs *kpaScaler) Scale(ctx context.Context, kpa *kpa.PodAutoscaler, desiredScale int32) error {
-	logger := logging.FromContext(ctx)
-
-	if desiredScale < 0 {
-		logger.Debug("Metrics are not yet being collected.")
-		return nil
+// pre: 0 <= min <= max && 0 <= x
+func applyBounds(min, max int32) func(int32) int32 {
+	return func(x int32) int32 {
+		if x < min {
+			return min
+		}
+		if max != 0 && x > max {
+			return max
+		}
+		return x
 	}
+}
+
+// Scale attempts to scale the given KPA's target reference to the desired scale.
+func (ks *kpaScaler) Scale(ctx context.Context, kpa *kpa.PodAutoscaler, desiredScale int32) error {
+	logger := logging.FromContext(ctx)
 
 	// TODO(mattmoor): Drop this once the KPA is the source of truth and we
 	// scale exclusively on metrics.
@@ -103,14 +111,6 @@ func (rs *kpaScaler) Scale(ctx context.Context, kpa *kpa.PodAutoscaler, desiredS
 		return nil
 	}
 
-	// Do not scale an inactive revision.
-	revisionClient := rs.servingClientSet.ServingV1alpha1().Revisions(kpa.Namespace)
-	rev, err := revisionClient.Get(owner.Name, metav1.GetOptions{})
-	if err != nil {
-		logger.Error("Unable to fetch Revision.", zap.Error(err))
-		return err
-	}
-
 	gv, err := schema.ParseGroupVersion(kpa.Spec.ScaleTargetRef.APIVersion)
 	if err != nil {
 		logger.Error("Unable to parse APIVersion.", zap.Error(err))
@@ -120,35 +120,51 @@ func (rs *kpaScaler) Scale(ctx context.Context, kpa *kpa.PodAutoscaler, desiredS
 	resourceName := kpa.Spec.ScaleTargetRef.Name
 
 	// Identify the current scale.
-	scl, err := rs.scaleClientSet.Scales(kpa.Namespace).Get(resource, resourceName)
+	scl, err := ks.scaleClientSet.Scales(kpa.Namespace).Get(resource, resourceName)
 	if err != nil {
 		logger.Errorf("Resource %q not found.", resourceName, zap.Error(err))
 		return err
 	}
+	currentScale := scl.Spec.Replicas
 
-	// When scaling to zero, flip the revision's ServingState to Reserve (if Active).
-	if kpa.Spec.ServingState == v1alpha1.RevisionServingStateActive && desiredScale == 0 {
-		logger.Debug("Setting revision ServingState to Reserve.")
-		rev.Spec.ServingState = v1alpha1.RevisionServingStateReserve
-		if _, err := revisionClient.Update(rev); err != nil {
-			logger.Error("Error updating revision serving state.", zap.Error(err))
+	// Scale to zero. When scaling to zero, flip the revision's
+	// ServingState to Reserve (if Active).
+	if desiredScale == 0 {
+		if err := ks.updateServingState(logger, kpa.Namespace, owner.Name, v1alpha1.RevisionServingStateReserve); err != nil {
 			return err
 		}
-		return nil
-	}
 
-	// When ServingState=Reserve (see above) propagates to us, then actually scale
-	// things to zero.
-	if kpa.Spec.ServingState != v1alpha1.RevisionServingStateActive {
-		// Delay the scale to zero until the LTT of "Active=False" is some time in the past.
-		if !kpa.Status.CanScaleToZero(rs.getAutoscalerConfig().ScaleToZeroGracePeriod) {
+		// Scale to zero grace period.
+		if !kpa.Status.CanScaleToZero(ks.getAutoscalerConfig().ScaleToZeroGracePeriod) {
 			logger.Debug("Waiting for Active=False grace period.")
 			return nil
 		}
-		desiredScale = 0
 	}
 
-	currentScale := scl.Spec.Replicas
+	// Scale from zero. When scaling from zero, flip the revision's
+	// ServingState to Active
+	if currentScale == 0 && desiredScale > 0 {
+		if err := ks.updateServingState(logger, kpa.Namespace, owner.Name, v1alpha1.RevisionServingStateActive); err != nil {
+			return err
+		}
+	}
+
+	// Scale from zero. When there are no metrics scale to 1.
+	if currentScale == 0 && desiredScale == -1 {
+		logger.Debugf("Scaling up from 0 to 1")
+		desiredScale = 1
+	}
+
+	if desiredScale < 0 {
+		logger.Debug("Metrics are not yet being collected.")
+		return nil
+	}
+
+	if newScale := applyBounds(kpa.ScaleBounds())(desiredScale); newScale != desiredScale {
+		logger.Debugf("Adjusting desiredScale: %v -> %v", desiredScale, newScale)
+		desiredScale = newScale
+	}
+
 	if desiredScale == currentScale {
 		return nil
 	}
@@ -156,12 +172,28 @@ func (rs *kpaScaler) Scale(ctx context.Context, kpa *kpa.PodAutoscaler, desiredS
 
 	// Scale the target reference.
 	scl.Spec.Replicas = desiredScale
-	_, err = rs.scaleClientSet.Scales(kpa.Namespace).Update(resource, scl)
+	_, err = ks.scaleClientSet.Scales(kpa.Namespace).Update(resource, scl)
 	if err != nil {
 		logger.Errorf("Error scaling target reference %v.", resourceName, zap.Error(err))
 		return err
 	}
 
 	logger.Debug("Successfully scaled.")
+	return nil
+}
+
+func (ks *kpaScaler) updateServingState(logger *zap.SugaredLogger, namespace, name string, state v1alpha1.RevisionServingStateType) error {
+	logger.Debugf("Setting revision ServingState to %v.", state)
+	revisionClient := ks.servingClientSet.ServingV1alpha1().Revisions(namespace)
+	rev, err := revisionClient.Get(name, metav1.GetOptions{})
+	if err != nil {
+		logger.Error("Unable to fetch Revision.", zap.Error(err))
+		return err
+	}
+	rev.Spec.ServingState = state
+	if _, err := revisionClient.Update(rev); err != nil {
+		logger.Error("Error updating revision serving state.", zap.Error(err))
+		return err
+	}
 	return nil
 }

@@ -27,6 +27,7 @@ import (
 )
 
 const (
+	// ConfigName is the name of the config map of the autoscaler.
 	ConfigName = "config-autoscaler"
 )
 
@@ -42,11 +43,10 @@ type Config struct {
 	ContainerConcurrencyTargetDefault    float64
 
 	// General autoscaler algorithm configuration.
-	MaxScaleUpRate           float64
-	StableWindow             time.Duration
-	PanicWindow              time.Duration
-	TickInterval             time.Duration
-	ConcurrencyQuantumOfTime time.Duration
+	MaxScaleUpRate float64
+	StableWindow   time.Duration
+	PanicWindow    time.Duration
+	TickInterval   time.Duration
 
 	ScaleToZeroThreshold   time.Duration
 	ScaleToZeroGracePeriod time.Duration
@@ -54,11 +54,13 @@ type Config struct {
 	ScaleToZeroIdlePeriod time.Duration
 }
 
-func (c *Config) TargetConcurrency(model v1alpha1.RevisionContainerConcurrencyType) float64 {
-	if model == 0 {
+// TargetConcurrency calculates the target concurrency for a given container-concurrency
+// taking the container-concurrency-target-percentage into account.
+func (c *Config) TargetConcurrency(concurrency v1alpha1.RevisionContainerConcurrencyType) float64 {
+	if concurrency == 0 {
 		return c.ContainerConcurrencyTargetDefault
 	}
-	return float64(model) * c.ContainerConcurrencyTargetPercentage
+	return float64(concurrency) * c.ContainerConcurrencyTargetPercentage
 }
 
 // NewConfigFromMap creates a Config from the supplied map
@@ -134,9 +136,6 @@ func NewConfigFromMap(data map[string]string) (*Config, error) {
 		field:        &lc.ScaleToZeroGracePeriod,
 		optional:     true,
 		defaultValue: 2 * time.Minute,
-	}, {
-		key:   "concurrency-quantum-of-time",
-		field: &lc.ConcurrencyQuantumOfTime,
 	}, {
 		key:   "tick-interval",
 		field: &lc.TickInterval,

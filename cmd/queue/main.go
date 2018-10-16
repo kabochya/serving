@@ -35,7 +35,7 @@ import (
 	"github.com/knative/serving/cmd/util"
 	activatorutil "github.com/knative/serving/pkg/activator/util"
 	"github.com/knative/serving/pkg/autoscaler"
-	"github.com/knative/serving/pkg/h2c"
+	"github.com/knative/serving/pkg/http/h2c"
 	"github.com/knative/serving/pkg/logging"
 	"github.com/knative/serving/pkg/queue"
 	"github.com/knative/serving/pkg/system"
@@ -54,7 +54,7 @@ const (
 	// Add enough buffer to not block request serving on stats collection
 	requestCountingQueueLength = 100
 	// Number of seconds the /quitquitquit handler should wait before
-	// returning.  The purpose is to kill the container alive a little
+	// returning.  The purpose is to keep the container alive a little
 	// bit longer, that it doesn't go away until the pod is truly
 	// removed from service.
 	quitSleepSecs = 20
@@ -78,8 +78,9 @@ var (
 	h2cProxy  *httputil.ReverseProxy
 	httpProxy *httputil.ReverseProxy
 
-	concurrencyQuantumOfTime = flag.Duration("concurrencyQuantumOfTime", 100*time.Millisecond, "")
-	containerConcurrency     = flag.Int("containerConcurrency", 0, "")
+	health *healthServer = &healthServer{alive: true}
+
+	containerConcurrency = flag.Int("containerConcurrency", 0, "")
 )
 
 func initEnv() {
@@ -91,7 +92,7 @@ func initEnv() {
 	servingAutoscalerPort = util.GetRequiredEnvOrFatal("SERVING_AUTOSCALER_PORT", logger)
 
 	// TODO(mattmoor): Move this key to be in terms of the KPA.
-	servingRevisionKey = fmt.Sprintf("%s/%s", servingNamespace, servingRevision)
+	servingRevisionKey = autoscaler.NewKpaKey(servingNamespace, servingRevision)
 }
 
 func statReporter() {
@@ -100,6 +101,9 @@ func statReporter() {
 		if statSink == nil {
 			logger.Warn("Stat sink not (yet) connected.")
 			continue
+		}
+		if !health.isAlive() {
+			s.LameDuck = true
 		}
 		sm := autoscaler.StatMessage{
 			Stat: *s,
@@ -136,9 +140,9 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Metrics for autoscaling
-	reqChan <- queue.ReqIn
+	reqChan <- queue.ReqEvent{Time: time.Now(), EventType: queue.ReqIn}
 	defer func() {
-		reqChan <- queue.ReqOut
+		reqChan <- queue.ReqEvent{Time: time.Now(), EventType: queue.ReqOut}
 	}()
 	// Enforce queuing and concurrency limits
 	if breaker != nil {
@@ -209,12 +213,9 @@ func (h *healthServer) quitHandler(w http.ResponseWriter, r *http.Request) {
 
 // Sets up /health and /quitquitquit endpoints.
 func setupAdminHandlers(server *http.Server) {
-	h := healthServer{
-		alive: true,
-	}
 	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/%s", queue.RequestQueueHealthPath), h.healthHandler)
-	mux.HandleFunc(fmt.Sprintf("/%s", queue.RequestQueueQuitPath), h.quitHandler)
+	mux.HandleFunc(fmt.Sprintf("/%s", queue.RequestQueueHealthPath), health.healthHandler)
+	mux.HandleFunc(fmt.Sprintf("/%s", queue.RequestQueueQuitPath), health.quitHandler)
 	server.Handler = mux
 	server.ListenAndServe()
 }
@@ -244,9 +245,14 @@ func main() {
 
 	// If containerConcurrency == 0 then concurrency is unlimited.
 	if *containerConcurrency > 0 {
-		// We set the queue depth to be equal to the container concurrency.
-		breaker = queue.NewBreaker(int32(*containerConcurrency), int32(*containerConcurrency))
-		logger.Infof("Queue container is starting with queueDepth and containerConcurrency: %s", *containerConcurrency)
+		// We set the queue depth to be equal to the container concurrency but at least 10 to
+		// allow the autoscaler to get a strong enough signal.
+		queueDepth := *containerConcurrency
+		if queueDepth < 10 {
+			queueDepth = 10
+		}
+		breaker = queue.NewBreaker(int32(queueDepth), int32(*containerConcurrency))
+		logger.Infof("Queue container is starting with queueDepth: %d, containerConcurrency: %d", queueDepth, *containerConcurrency)
 	}
 
 	config, err := rest.InClusterConfig()
@@ -260,19 +266,17 @@ func main() {
 	kubeClient = kc
 
 	// Open a websocket connection to the autoscaler
-	autoscalerEndpoint := fmt.Sprintf("ws://%s.%s.svc.cluster.local:%s", servingAutoscaler, system.Namespace, servingAutoscalerPort)
+	autoscalerEndpoint := fmt.Sprintf("ws://%s.%s:%s", servingAutoscaler, system.Namespace, servingAutoscalerPort)
 	logger.Infof("Connecting to autoscaler at %s", autoscalerEndpoint)
 	statSink = websocket.NewDurableSendingConnection(autoscalerEndpoint)
 	go statReporter()
 
-	bucketTicker := time.NewTicker(*concurrencyQuantumOfTime).C
 	reportTicker := time.NewTicker(time.Second).C
 	queue.NewStats(podName, queue.Channels{
-		ReqChan:          reqChan,
-		QuantizationChan: bucketTicker,
-		ReportChan:       reportTicker,
-		StatChan:         statChan,
-	})
+		ReqChan:    reqChan,
+		ReportChan: reportTicker,
+		StatChan:   statChan,
+	}, time.Now())
 	defer func() {
 		if statSink != nil {
 			statSink.Close()

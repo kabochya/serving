@@ -19,25 +19,36 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	buildv1alpha1 "github.com/knative/build/pkg/apis/build/v1alpha1"
+	"github.com/knative/pkg/apis/duck"
 	duckv1alpha1 "github.com/knative/pkg/apis/duck/v1alpha1"
 )
 
-func TestGeneration(t *testing.T) {
-	r := Revision{}
-	if a := r.GetGeneration(); a != 0 {
-		t.Errorf("empty revision generation should be 0 was: %d", a)
-	}
+func TestRevisionDuckTypes(t *testing.T) {
+	var emptyGen duckv1alpha1.Generation
+	tests := []struct {
+		name string
+		t    duck.Implementable
+	}{{
+		name: "generation",
+		t:    &emptyGen,
+	}, {
+		name: "conditions",
+		t:    &duckv1alpha1.Conditions{},
+	}}
 
-	r.SetGeneration(5)
-	if e, a := int64(5), r.GetGeneration(); e != a {
-		t.Errorf("getgeneration mismatch expected: %d got: %d", e, a)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := duck.VerifyType(&Revision{}, test.t)
+			if err != nil {
+				t.Errorf("VerifyType(Revision, %T) = %v", test.t, err)
+			}
+		})
 	}
-
 }
 
 func TestIsActivationRequired(t *testing.T) {
@@ -268,9 +279,9 @@ func TestGetSetCondition(t *testing.T) {
 		Status: corev1.ConditionTrue,
 	}
 
-	rs.PropagateBuildStatus(buildv1alpha1.BuildStatus{
+	rs.PropagateBuildStatus(duckv1alpha1.KResourceStatus{
 		Conditions: []duckv1alpha1.Condition{{
-			Type:   buildv1alpha1.BuildSucceeded,
+			Type:   duckv1alpha1.ConditionSucceeded,
 			Status: corev1.ConditionTrue,
 		}},
 	})
@@ -293,15 +304,15 @@ func TestTypicalFlowWithBuild(t *testing.T) {
 	checkConditionOngoingRevision(r.Status, RevisionConditionReady, t)
 
 	// Empty BuildStatus keeps things as-is.
-	r.Status.PropagateBuildStatus(buildv1alpha1.BuildStatus{})
+	r.Status.PropagateBuildStatus(duckv1alpha1.KResourceStatus{})
 	checkConditionOngoingRevision(r.Status, RevisionConditionBuildSucceeded, t)
 	checkConditionOngoingRevision(r.Status, RevisionConditionResourcesAvailable, t)
 	checkConditionOngoingRevision(r.Status, RevisionConditionContainerHealthy, t)
 	checkConditionOngoingRevision(r.Status, RevisionConditionReady, t)
 
-	r.Status.PropagateBuildStatus(buildv1alpha1.BuildStatus{
+	r.Status.PropagateBuildStatus(duckv1alpha1.KResourceStatus{
 		Conditions: []duckv1alpha1.Condition{{
-			Type:   buildv1alpha1.BuildSucceeded,
+			Type:   duckv1alpha1.ConditionSucceeded,
 			Status: corev1.ConditionUnknown,
 		}},
 	})
@@ -315,9 +326,9 @@ func TestTypicalFlowWithBuild(t *testing.T) {
 		t.Errorf("PropagateBuildStatus(Unknown) = %v, wanted %v", got, want)
 	}
 
-	r.Status.PropagateBuildStatus(buildv1alpha1.BuildStatus{
+	r.Status.PropagateBuildStatus(duckv1alpha1.KResourceStatus{
 		Conditions: []duckv1alpha1.Condition{{
-			Type:   buildv1alpha1.BuildSucceeded,
+			Type:   duckv1alpha1.ConditionSucceeded,
 			Status: corev1.ConditionTrue,
 		}},
 	})
@@ -398,9 +409,9 @@ func TestTypicalFlowWithBuildFailure(t *testing.T) {
 	checkConditionOngoingRevision(r.Status, RevisionConditionContainerHealthy, t)
 	checkConditionOngoingRevision(r.Status, RevisionConditionReady, t)
 
-	r.Status.PropagateBuildStatus(buildv1alpha1.BuildStatus{
+	r.Status.PropagateBuildStatus(duckv1alpha1.KResourceStatus{
 		Conditions: []duckv1alpha1.Condition{{
-			Type:   buildv1alpha1.BuildSucceeded,
+			Type:   duckv1alpha1.ConditionSucceeded,
 			Status: corev1.ConditionUnknown,
 		}},
 	})
@@ -410,9 +421,9 @@ func TestTypicalFlowWithBuildFailure(t *testing.T) {
 	checkConditionOngoingRevision(r.Status, RevisionConditionReady, t)
 
 	wantReason, wantMessage := "this is the reason", "and this the message"
-	r.Status.PropagateBuildStatus(buildv1alpha1.BuildStatus{
+	r.Status.PropagateBuildStatus(duckv1alpha1.KResourceStatus{
 		Conditions: []duckv1alpha1.Condition{{
-			Type:    buildv1alpha1.BuildSucceeded,
+			Type:    duckv1alpha1.ConditionSucceeded,
 			Status:  corev1.ConditionFalse,
 			Reason:  wantReason,
 			Message: wantMessage,
@@ -574,5 +585,65 @@ func TestRevisionGetGroupVersionKind(t *testing.T) {
 	}
 	if got := r.GetGroupVersionKind(); got != want {
 		t.Errorf("got: %v, want: %v", got, want)
+	}
+}
+
+func TestRevisionBuildRefFromName(t *testing.T) {
+	r := &Revision{
+		ObjectMeta: v1.ObjectMeta{
+			Namespace: "foo-space",
+			Name:      "foo",
+		},
+		Spec: RevisionSpec{
+			BuildName: "bar-build",
+		},
+	}
+	got := *r.BuildRef()
+	want := corev1.ObjectReference{
+		APIVersion: "build.knative.dev/v1alpha1",
+		Kind:       "Build",
+		Namespace:  "foo-space",
+		Name:       "bar-build",
+	}
+	if got != want {
+		t.Errorf("got: %#v, want: %#v", got, want)
+	}
+}
+
+func TestRevisionBuildRef(t *testing.T) {
+	buildRef := corev1.ObjectReference{
+		APIVersion: "testing.build.knative.dev/v1alpha1",
+		Kind:       "Build",
+		Namespace:  "foo-space",
+		Name:       "foo-build",
+	}
+	r := &Revision{
+		ObjectMeta: v1.ObjectMeta{
+			Namespace: "foo-space",
+			Name:      "foo",
+		},
+		Spec: RevisionSpec{
+			BuildName: "bar",
+			BuildRef:  &buildRef,
+		},
+	}
+	got := *r.BuildRef()
+	want := buildRef
+	if got != want {
+		t.Errorf("got: %#v, want: %#v", got, want)
+	}
+}
+
+func TestRevisionBuildRefNil(t *testing.T) {
+	r := &Revision{
+		ObjectMeta: v1.ObjectMeta{
+			Namespace: "foo-space",
+			Name:      "foo",
+		},
+	}
+	got := r.BuildRef()
+	var want *corev1.ObjectReference = nil
+	if got != want {
+		t.Errorf("got: %#v, want: %#v", got, want)
 	}
 }

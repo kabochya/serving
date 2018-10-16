@@ -355,7 +355,6 @@ func TestCreateRouteForOneReserveRevision(t *testing.T) {
 			Route: []v1alpha3.DestinationWeight{getActivatorDestinationWeight(100)},
 			AppendHeaders: map[string]string{
 				activator.RevisionHeaderName:      "test-rev",
-				activator.ConfigurationHeader:     "test-config",
 				activator.RevisionHeaderNamespace: testNamespace,
 			},
 			Timeout: resources.DefaultRouteTimeout,
@@ -548,7 +547,6 @@ func TestCreateRouteWithOneTargetReserve(t *testing.T) {
 			}, getActivatorDestinationWeight(10)},
 			AppendHeaders: map[string]string{
 				activator.RevisionHeaderName:      "test-rev",
-				activator.ConfigurationHeader:     "test-config",
 				activator.RevisionHeaderNamespace: testNamespace,
 			},
 			Timeout: resources.DefaultRouteTimeout,
@@ -824,90 +822,6 @@ func TestCreateRouteWithNamedTargets(t *testing.T) {
 	if diff := cmp.Diff(expectedSpec, vs.Spec); diff != "" {
 		fmt.Printf("%+v\n", vs.Spec)
 		t.Errorf("Unexpected rule spec diff (-want +got): %v", diff)
-	}
-}
-
-func TestEnqueueReferringRoute(t *testing.T) {
-	_, _, servingClient, controller, reconciler, _, _, servingInformer, _ := newTestSetup(t)
-	routeClient := servingClient.ServingV1alpha1().Routes(testNamespace)
-
-	config := getTestConfiguration()
-	rev := getTestRevisionForConfig(config)
-	route := getTestRouteWithTrafficTargets(
-		[]v1alpha1.TrafficTarget{{
-			ConfigurationName: config.Name,
-			Percent:           100,
-		}},
-	)
-
-	routeClient.Create(route)
-	// Since EnqueueReferringRoute looks in the lister, we need to add it to the informer
-	servingInformer.Serving().V1alpha1().Routes().Informer().GetIndexer().Add(route)
-
-	// Update config to have LatestReadyRevisionName and route label.
-	config.Status.LatestReadyRevisionName = rev.Name
-	config.Labels = map[string]string{
-		serving.RouteLabelKey: route.Name,
-	}
-	f := reconciler.EnqueueReferringRoute(controller)
-	f(config)
-	// add this fake queue end marker.
-	controller.WorkQueue.AddRateLimited("queue-has-no-work")
-	expected := fmt.Sprintf("%s/%s", route.Namespace, route.Name)
-	if k, _ := controller.WorkQueue.Get(); k != expected {
-		t.Errorf("Expected %q, saw %q", expected, k)
-	}
-}
-
-func TestEnqueueReferringRouteNotEnqueueIfHasNoLatestReady(t *testing.T) {
-	_, _, _, controller, reconciler, _, _, _, _ := newTestSetup(t)
-	config := getTestConfiguration()
-
-	f := reconciler.EnqueueReferringRoute(controller)
-	f(config)
-	// add this item to avoid being blocked by queue.
-	expected := "queue-has-no-work"
-	controller.WorkQueue.AddRateLimited(expected)
-	if k, _ := controller.WorkQueue.Get(); k != expected {
-		t.Errorf("Expected %v, saw %v", expected, k)
-	}
-}
-
-func TestEnqueueReferringRouteNotEnqueueIfHavingNoRouteLabel(t *testing.T) {
-	_, _, _, controller, reconciler, _, _, _, _ := newTestSetup(t)
-	config := getTestConfiguration()
-	rev := getTestRevisionForConfig(config)
-	fmt.Println(rev.Name)
-	config.Status.LatestReadyRevisionName = rev.Name
-
-	if controller.WorkQueue.Len() > 0 {
-		t.Errorf("Expecting no route sync work prior to config change")
-	}
-	f := reconciler.EnqueueReferringRoute(controller)
-	f(config)
-	// add this item to avoid being blocked by queue.
-	expected := "queue-has-no-work"
-	controller.WorkQueue.AddRateLimited(expected)
-	if k, _ := controller.WorkQueue.Get(); k != expected {
-		t.Errorf("Expected %v, saw %v", expected, k)
-	}
-}
-
-func TestEnqueueReferringRouteNotEnqueueIfNotGivenAConfig(t *testing.T) {
-	_, _, _, controller, reconciler, _, _, _, _ := newTestSetup(t)
-	config := getTestConfiguration()
-	rev := getTestRevisionForConfig(config)
-
-	if controller.WorkQueue.Len() > 0 {
-		t.Errorf("Expecting no route sync work prior to config change")
-	}
-	f := reconciler.EnqueueReferringRoute(controller)
-	f(rev)
-	// add this item to avoid being blocked by queue.
-	expected := "queue-has-no-work"
-	controller.WorkQueue.AddRateLimited(expected)
-	if k, _ := controller.WorkQueue.Get(); k != expected {
-		t.Errorf("Expected %v, saw %v", expected, k)
 	}
 }
 

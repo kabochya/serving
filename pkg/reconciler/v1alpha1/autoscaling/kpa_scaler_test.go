@@ -17,11 +17,13 @@ limitations under the License.
 package autoscaling
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/knative/pkg/apis"
 	duckv1alpha1 "github.com/knative/pkg/apis/duck/v1alpha1"
+	"github.com/knative/serving/pkg/apis/autoscaling"
 	kpa "github.com/knative/serving/pkg/apis/autoscaling/v1alpha1"
 	"github.com/knative/serving/pkg/apis/serving/v1alpha1"
 	clientset "github.com/knative/serving/pkg/client/clientset/versioned"
@@ -49,6 +51,8 @@ func TestKPAScaler(t *testing.T) {
 		startState    v1alpha1.RevisionServingStateType
 		startReplicas int
 		scaleTo       int32
+		minScale      int32
+		maxScale      int32
 		wantState     v1alpha1.RevisionServingStateType
 		wantReplicas  int
 		wantScaling   bool
@@ -98,6 +102,23 @@ func TestKPAScaler(t *testing.T) {
 			}}
 		},
 	}, {
+		label:         "scale down to minScale after grace period",
+		startState:    v1alpha1.RevisionServingStateReserve,
+		startReplicas: 10,
+		scaleTo:       0,
+		minScale:      2,
+		wantState:     v1alpha1.RevisionServingStateReserve,
+		wantReplicas:  2,
+		wantScaling:   true,
+		kpaMutation: func(k *kpa.PodAutoscaler) {
+			ltt := time.Now().Add(-gracePeriod)
+			k.Status.Conditions = duckv1alpha1.Conditions{{
+				Type:               "Active",
+				Status:             "False",
+				LastTransitionTime: apis.VolatileTime{metav1.NewTime(ltt)},
+			}}
+		},
+	}, {
 		label:         "scales up",
 		startState:    v1alpha1.RevisionServingStateActive,
 		startReplicas: 1,
@@ -106,22 +127,40 @@ func TestKPAScaler(t *testing.T) {
 		wantReplicas:  10,
 		wantScaling:   true,
 	}, {
-		label:         "scales up inactive revision",
-		startState:    v1alpha1.RevisionServingStateReserve,
+		label:         "scales up to maxScale",
+		startState:    v1alpha1.RevisionServingStateActive,
 		startReplicas: 1,
 		scaleTo:       10,
-		wantState:     v1alpha1.RevisionServingStateReserve,
-		wantReplicas:  0,
+		maxScale:      8,
+		wantState:     v1alpha1.RevisionServingStateActive,
+		wantReplicas:  8,
 		wantScaling:   true,
-		kpaMutation: func(k *kpa.PodAutoscaler) {
-			k.Status.Conditions = duckv1alpha1.Conditions{{
-				Type:   "Active",
-				Status: "False",
-				// No LTT == a long long time ago
-			}}
-		},
 	}, {
-		label:         "does not scale up from zero",
+		label:         "scale up inactive revision",
+		startState:    v1alpha1.RevisionServingStateReserve,
+		startReplicas: 0,
+		scaleTo:       10,
+		wantState:     v1alpha1.RevisionServingStateActive,
+		wantReplicas:  10,
+		wantScaling:   true,
+	}, {
+		label:         "scales up from zero with no metrics",
+		startState:    v1alpha1.RevisionServingStateActive,
+		startReplicas: 0,
+		scaleTo:       -1, // no metrics
+		wantState:     v1alpha1.RevisionServingStateActive,
+		wantReplicas:  1,
+		wantScaling:   true,
+	}, {
+		label:         "scales up from zero to desired one",
+		startState:    v1alpha1.RevisionServingStateActive,
+		startReplicas: 0,
+		scaleTo:       1,
+		wantState:     v1alpha1.RevisionServingStateActive,
+		wantReplicas:  1,
+		wantScaling:   true,
+	}, {
+		label:         "scales up from zero to desired high scale",
 		startState:    v1alpha1.RevisionServingStateActive,
 		startReplicas: 0,
 		scaleTo:       10,
@@ -144,7 +183,7 @@ func TestKPAScaler(t *testing.T) {
 			servingClient := fakeKna.NewSimpleClientset()
 			scaleClient := &scalefake.FakeScaleClient{}
 
-			revision := newRevision(t, servingClient, e.startState)
+			revision := newRevision(t, servingClient, e.startState, e.minScale, e.maxScale)
 			deployment := newDeployment(t, scaleClient, revision, e.startReplicas)
 			revisionScaler := NewKPAScaler(servingClient, scaleClient, TestLogger(t), newConfigWatcher())
 
@@ -177,11 +216,19 @@ func newKPA(t *testing.T, servingClient clientset.Interface, revision *v1alpha1.
 	return kpa
 }
 
-func newRevision(t *testing.T, servingClient clientset.Interface, servingState v1alpha1.RevisionServingStateType) *v1alpha1.Revision {
+func newRevision(t *testing.T, servingClient clientset.Interface, servingState v1alpha1.RevisionServingStateType, minScale, maxScale int32) *v1alpha1.Revision {
+	annotations := map[string]string{}
+	if minScale > 0 {
+		annotations[autoscaling.MinScaleAnnotationKey] = strconv.Itoa(int(minScale))
+	}
+	if maxScale > 0 {
+		annotations[autoscaling.MaxScaleAnnotationKey] = strconv.Itoa(int(maxScale))
+	}
 	rev := &v1alpha1.Revision{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: testNamespace,
-			Name:      testRevision,
+			Namespace:   testNamespace,
+			Name:        testRevision,
+			Annotations: annotations,
 		},
 		Spec: v1alpha1.RevisionSpec{
 			ServingState:     servingState,

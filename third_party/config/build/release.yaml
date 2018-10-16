@@ -224,7 +224,7 @@ metadata:
   name: creds-init
   namespace: knative-build
 spec:
-  image: gcr.io/knative-releases/github.com/knative/build/cmd/creds-init@sha256:f6594d53dab8c47a30110c054c64839d68b3215bb0591028e1c0ef291430eec7
+  image: gcr.io/knative-releases/github.com/knative/build/cmd/creds-init@sha256:a5eddd139e71e17fed7ba685844607f9fc715823e57a9aa81a815a376deb63eb
 ---
 apiVersion: caching.internal.knative.dev/v1alpha1
 kind: Image
@@ -232,7 +232,7 @@ metadata:
   name: git-init
   namespace: knative-build
 spec:
-  image: gcr.io/knative-releases/github.com/knative/build/cmd/git-init@sha256:940f2268bee5c1856da72aec475f8652e692601095918d87c8f4f4d90e76e987
+  image: gcr.io/knative-releases/github.com/knative/build/cmd/git-init@sha256:0f1b45b2cbb842b51d5499c0235fab759b7550052f12e825d376f4d159ab3634
 ---
 apiVersion: caching.internal.knative.dev/v1alpha1
 kind: Image
@@ -241,6 +241,14 @@ metadata:
   namespace: knative-build
 spec:
   image: gcr.io/cloud-builders/gcs-fetcher
+---
+apiVersion: caching.internal.knative.dev/v1alpha1
+kind: Image
+metadata:
+  name: nop
+  namespace: knative-build
+spec:
+  image: gcr.io/knative-releases/github.com/knative/build/cmd/nop@sha256:c1a3869762368500dd8b763c8033108f44d7fd490d4ea2ee4564b2b840760324
 ---
 apiVersion: v1
 data:
@@ -278,13 +286,16 @@ metadata:
   name: config-logging
   namespace: knative-build
 ---
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: build-controller
   namespace: knative-build
 spec:
   replicas: 1
+  selector:
+    matchLabels:
+      app: build-controller
   template:
     metadata:
       labels:
@@ -296,10 +307,12 @@ spec:
         - -stderrthreshold
         - INFO
         - -creds-image
-        - gcr.io/knative-releases/github.com/knative/build/cmd/creds-init@sha256:f6594d53dab8c47a30110c054c64839d68b3215bb0591028e1c0ef291430eec7
+        - gcr.io/knative-releases/github.com/knative/build/cmd/creds-init@sha256:a5eddd139e71e17fed7ba685844607f9fc715823e57a9aa81a815a376deb63eb
         - -git-image
-        - gcr.io/knative-releases/github.com/knative/build/cmd/git-init@sha256:940f2268bee5c1856da72aec475f8652e692601095918d87c8f4f4d90e76e987
-        image: gcr.io/knative-releases/github.com/knative/build/cmd/controller@sha256:1f5553d89d1ccc17d92421e57e7512c48c074adc63b9a0fa3f89bc745af1b196
+        - gcr.io/knative-releases/github.com/knative/build/cmd/git-init@sha256:0f1b45b2cbb842b51d5499c0235fab759b7550052f12e825d376f4d159ab3634
+        - -nop-image
+        - gcr.io/knative-releases/github.com/knative/build/cmd/nop@sha256:c1a3869762368500dd8b763c8033108f44d7fd490d4ea2ee4564b2b840760324
+        image: gcr.io/knative-releases/github.com/knative/build/cmd/controller@sha256:5d12da76b8ba36548a97b07866fdc9c13c1cb0e499dfdcca97af731b1ad2c488
         name: build-controller
         volumeMounts:
         - mountPath: /etc/config-logging
@@ -310,13 +323,16 @@ spec:
           name: config-logging
         name: config-logging
 ---
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: build-webhook
   namespace: knative-build
 spec:
   replicas: 1
+  selector:
+    matchLabels:
+      app: build-webhook
   template:
     metadata:
       labels:
@@ -328,7 +344,7 @@ spec:
         - -logtostderr
         - -stderrthreshold
         - INFO
-        image: gcr.io/knative-releases/github.com/knative/build/cmd/webhook@sha256:da3d38bd402a283328f13c3da2def7bee4b14c4d6bc162b8e16b3b00834c2c45
+        image: gcr.io/knative-releases/github.com/knative/build/cmd/webhook@sha256:1e63c38c6d653698973bd8c8320d4db2bdcb1b46130b33949f848c67034fe6f8
         name: build-webhook
         volumeMounts:
         - mountPath: /etc/config-logging

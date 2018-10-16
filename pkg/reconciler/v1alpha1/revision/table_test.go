@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	buildv1alpha1 "github.com/knative/build/pkg/apis/build/v1alpha1"
 	caching "github.com/knative/caching/pkg/apis/caching/v1alpha1"
 	"github.com/knative/pkg/apis"
+	"github.com/knative/pkg/apis/duck"
 	duckv1alpha1 "github.com/knative/pkg/apis/duck/v1alpha1"
 	"github.com/knative/pkg/configmap"
 	"github.com/knative/pkg/controller"
@@ -37,9 +37,12 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	clientgotesting "k8s.io/client-go/testing"
 
+	rtesting "github.com/knative/serving/pkg/reconciler/testing"
 	. "github.com/knative/serving/pkg/reconciler/v1alpha1/testing"
 )
 
@@ -334,93 +337,6 @@ func TestReconcile(t *testing.T) {
 		// No changes are made to any objects.
 		Key: "foo/stable-reconcile",
 	}, {
-		Name: "deactivate a revision",
-		// Test the transition that's made when Reserve is set.
-		// We initialize the world to a stable Active state, but make the
-		// Revision's ServingState Reserve.  We then looks for the expected
-		// mutations, which should include reducing the Deployments to 0 replicas
-		// and deleting the Kubernetes Service resources.
-		Objects: []runtime.Object{
-			makeStatus(
-				// The revision has been set to Deactivated, but all of the objects
-				// reflect being Active.
-				rev("foo", "deactivate", "Reserve", "busybox"),
-				v1alpha1.RevisionStatus{
-					ServiceName: svc("foo", "deactivate", "Active", "busybox").Name,
-					LogURL:      "http://logger.io/test-uid",
-					Conditions: duckv1alpha1.Conditions{{
-						Type:   "Active",
-						Status: "Unknown",
-						Reason: "Deploying",
-					}, {
-						Type:   "ResourcesAvailable",
-						Status: "Unknown",
-						Reason: "Deploying",
-					}, {
-						Type:   "ContainerHealthy",
-						Status: "Unknown",
-						Reason: "Deploying",
-					}, {
-						Type:   "Ready",
-						Status: "Unknown",
-						Reason: "Deploying",
-					}},
-				}),
-			kpa("foo", "deactivate", "Active", "busybox"),
-			// The Deployments match what we'd expect of an Active revision.
-			deploy("foo", "deactivate", "Active", "busybox"),
-			// The Services match what we'd expect of an Active revision.
-			svc("foo", "deactivate", "Active", "busybox"),
-			image("foo", "deactivate", "Active", "busybox"),
-		},
-		WantUpdates: []clientgotesting.UpdateActionImpl{{
-			Object: kpa("foo", "deactivate", "Reserve", "busybox"),
-		}},
-		// We update the Deployments to have zero replicas and delete the K8s Services when we deactivate.
-		Key: "foo/deactivate",
-	}, {
-		Name: "failure updating kpa",
-		// Induce a failure updating the kpa
-		WantErr: true,
-		WithReactors: []clientgotesting.ReactionFunc{
-			InduceFailure("update", "podautoscalers"),
-		},
-		Objects: []runtime.Object{
-			makeStatus(
-				rev("foo", "update-kpa-failure", "Reserve", "busybox"),
-				v1alpha1.RevisionStatus{
-					ServiceName: svc("foo", "update-kpa-failure", "Active", "busybox").Name,
-					LogURL:      "http://logger.io/test-uid",
-					Conditions: duckv1alpha1.Conditions{{
-						Type:   "Active",
-						Status: "Unknown",
-						Reason: "Deploying",
-					}, {
-						Type:   "ResourcesAvailable",
-						Status: "Unknown",
-						Reason: "Deploying",
-					}, {
-						Type:   "ContainerHealthy",
-						Status: "Unknown",
-						Reason: "Deploying",
-					}, {
-						Type:   "Ready",
-						Status: "Unknown",
-						Reason: "Deploying",
-					}},
-				}),
-			kpa("foo", "update-kpa-failure", "Active", "busybox"),
-			// The Deployments match what we'd expect of an Active revision.
-			deploy("foo", "update-kpa-failure", "Reserve", "busybox"),
-			svc("foo", "update-kpa-failure", "Reserve", "busybox"),
-			image("foo", "update-kpa-failure", "Reserve", "busybox"),
-		},
-		WantUpdates: []clientgotesting.UpdateActionImpl{{
-			Object: kpa("foo", "update-kpa-failure", "Reserve", "busybox"),
-		}},
-		// We update the Deployments to have zero replicas and delete the K8s Services when we deactivate.
-		Key: "foo/update-kpa-failure",
-	}, {
 		Name: "deactivated revision is stable",
 		// Test a simple stable reconciliation of a Reserve Revision.
 		// We feed in a Revision and the resources it controls in a steady
@@ -498,8 +414,6 @@ func TestReconcile(t *testing.T) {
 			image("foo", "activate-revision", "Reserve", "busybox"),
 		},
 		WantUpdates: []clientgotesting.UpdateActionImpl{{
-			Object: kpa("foo", "activate-revision", "Active", "busybox"),
-		}, {
 			Object: makeStatus(
 				rev("foo", "activate-revision", "Active", "busybox"),
 				// After activating the Revision status looks like this.
@@ -1106,7 +1020,7 @@ func TestReconcile(t *testing.T) {
 			addBuild(rev("foo", "running-build", "Active", "busybox"), "the-build"),
 			build("foo", "the-build",
 				duckv1alpha1.Condition{
-					Type:   buildv1alpha1.BuildSucceeded,
+					Type:   duckv1alpha1.ConditionSucceeded,
 					Status: corev1.ConditionUnknown,
 				}),
 		},
@@ -1163,7 +1077,7 @@ func TestReconcile(t *testing.T) {
 					}},
 				}),
 			build("foo", "the-build", duckv1alpha1.Condition{
-				Type:   buildv1alpha1.BuildSucceeded,
+				Type:   duckv1alpha1.ConditionSucceeded,
 				Status: corev1.ConditionTrue,
 			}),
 		},
@@ -1238,7 +1152,7 @@ func TestReconcile(t *testing.T) {
 				}),
 			kpa("foo", "stable-reconcile-with-build", "Active", "busybox"),
 			build("foo", "the-build", duckv1alpha1.Condition{
-				Type:   buildv1alpha1.BuildSucceeded,
+				Type:   duckv1alpha1.ConditionSucceeded,
 				Status: corev1.ConditionTrue,
 			}),
 			deploy("foo", "stable-reconcile-with-build", "Active", "busybox"),
@@ -1273,7 +1187,7 @@ func TestReconcile(t *testing.T) {
 					}},
 				}),
 			build("foo", "the-build", duckv1alpha1.Condition{
-				Type:    buildv1alpha1.BuildSucceeded,
+				Type:    duckv1alpha1.ConditionSucceeded,
 				Status:  corev1.ConditionFalse,
 				Reason:  "SomeReason",
 				Message: "This is why the build failed.",
@@ -1340,7 +1254,7 @@ func TestReconcile(t *testing.T) {
 					}},
 				}),
 			build("foo", "the-build", duckv1alpha1.Condition{
-				Type:    buildv1alpha1.BuildSucceeded,
+				Type:    duckv1alpha1.ConditionSucceeded,
 				Status:  corev1.ConditionFalse,
 				Reason:  "SomeReason",
 				Message: "This is why the build failed.",
@@ -1350,19 +1264,22 @@ func TestReconcile(t *testing.T) {
 	}}
 
 	table.Test(t, MakeFactory(func(listers *Listers, opt reconciler.Options) controller.Reconciler {
+		t := &rtesting.NullTracker{}
+		buildInformerFactory := KResourceTypedInformerFactory(opt)
 		return &Reconciler{
 			Base:             reconciler.NewBase(opt, controllerAgentName),
 			revisionLister:   listers.GetRevisionLister(),
 			kpaLister:        listers.GetKPALister(),
-			buildLister:      listers.GetBuildLister(),
 			imageLister:      listers.GetImageLister(),
 			deploymentLister: listers.GetDeploymentLister(),
 			serviceLister:    listers.GetK8sServiceLister(),
 			endpointsLister:  listers.GetEndpointsLister(),
 			configMapLister:  listers.GetConfigMapLister(),
 			resolver:         &nopResolver{},
-			buildtracker:     &buildTracker{builds: map[key]set{}},
+			tracker:          t,
 			configStore:      &testConfigStore{config: ReconcilerTestConfig()},
+
+			buildInformerFactory: newDuckInformerFactory(t, buildInformerFactory),
 		}
 	}))
 }
@@ -1618,14 +1535,13 @@ func TestReconcileWithVarLogEnabled(t *testing.T) {
 			Base:             reconciler.NewBase(opt, controllerAgentName),
 			revisionLister:   listers.GetRevisionLister(),
 			kpaLister:        listers.GetKPALister(),
-			buildLister:      listers.GetBuildLister(),
 			imageLister:      listers.GetImageLister(),
 			deploymentLister: listers.GetDeploymentLister(),
 			serviceLister:    listers.GetK8sServiceLister(),
 			endpointsLister:  listers.GetEndpointsLister(),
 			configMapLister:  listers.GetConfigMapLister(),
 			resolver:         &nopResolver{},
-			buildtracker:     &buildTracker{builds: map[key]set{}},
+			tracker:          &rtesting.NullTracker{},
 			configStore:      &testConfigStore{config: config},
 		}
 	}))
@@ -1650,6 +1566,11 @@ func makeStatus(rev *v1alpha1.Revision, status v1alpha1.RevisionStatus) *v1alpha
 
 func addBuild(rev *v1alpha1.Revision, name string) *v1alpha1.Revision {
 	rev.Spec.BuildName = name
+	rev.Spec.BuildRef = &corev1.ObjectReference{
+		APIVersion: "testing.build.knative.dev/v1alpha1",
+		Kind:       "Build",
+		Name:       name,
+	}
 	return rev
 }
 
@@ -1682,13 +1603,19 @@ func addKPAStatus(kpa *kpav1alpha1.PodAutoscaler, status kpav1alpha1.PodAutoscal
 
 // Build is a special case of resource creation because it isn't owned by
 // the Revision, just tracked.
-func build(namespace, name string, conds ...duckv1alpha1.Condition) *buildv1alpha1.Build {
-	return &buildv1alpha1.Build{
-		ObjectMeta: om(namespace, name),
-		Status: buildv1alpha1.BuildStatus{
-			Conditions: conds,
-		},
-	}
+func build(namespace, name string, conds ...duckv1alpha1.Condition) *unstructured.Unstructured {
+	b := &unstructured.Unstructured{}
+	b.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "testing.build.knative.dev",
+		Version: "v1alpha1",
+		Kind:    "Build",
+	})
+	b.SetName(name)
+	b.SetNamespace(namespace)
+	b.Object["status"] = map[string]interface{}{"conditions": conds}
+	u := &unstructured.Unstructured{}
+	duck.FromUnstructured(b, u) // prevent panic in b.DeepCopy()
+	return u
 }
 
 func getRev(namespace, name string, servingState v1alpha1.RevisionServingStateType, image string) *v1alpha1.Revision {
