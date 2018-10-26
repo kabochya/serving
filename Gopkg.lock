@@ -145,6 +145,14 @@
   version = "v1.36.0"
 
 [[projects]]
+  digest = "1:acaf854c7e302a7e13a665d00e6579fb72ead2ecd4932286deeac94ad3070fe7"
+  name = "github.com/gobuffalo/envy"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "047ecc927cd0b7d27bab83eb948e120fb7d1ea68"
+  version = "v1.6.5"
+
+[[projects]]
   digest = "1:93344b9d2c6f6c951d852e753e09c7d433a222e3c0ac952ff86f6e2527873b37"
   name = "github.com/gogo/protobuf"
   packages = [
@@ -291,6 +299,14 @@
   revision = "0b12d6b5"
 
 [[projects]]
+  digest = "1:da62aa6632d04e080b8a8b85a59ed9ed1550842a0099a55f3ae3a20d02a3745a"
+  name = "github.com/joho/godotenv"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "23d116af351c84513e1946b527c88823e476be13"
+  version = "v1.3.0"
+
+[[projects]]
   digest = "1:0243cffa4a3410f161ee613dfdd903a636d07e838a42d341da95d81f42cd1d41"
   name = "github.com/json-iterator/go"
   packages = ["."]
@@ -328,7 +344,7 @@
   revision = "f0d7bb60956f88d4743f5fea66b5607b96d262c9"
 
 [[projects]]
-  digest = "1:39238146f3078e1b04c0c9cae9f4541da258b1c01c565aae92b48e5c7b99c2ab"
+  digest = "1:09a0191630848e76bcf546f33f311141b0c6d8ff1ef24089b81a6f27bf19d118"
   name = "github.com/knative/pkg"
   packages = [
     "apis",
@@ -368,15 +384,23 @@
     "webhook",
   ]
   pruneopts = "NUT"
-  revision = "ba1a828cd571f605684f9a4506e85bc13cb65b8d"
+  revision = "5c809f170b42301a276080f4fd884a30188ca1a5"
 
 [[projects]]
   branch = "master"
-  digest = "1:00f434f614520a4b48ef3f6d3ed5c7a1a4f89be1bed98c250711413f6da2eb51"
+  digest = "1:f42d23c4286880873a951329d5a6002fcb9ee9f7d6c5fd8263ea53df2391acee"
   name = "github.com/knative/test-infra"
   packages = ["."]
   pruneopts = "T"
-  revision = "c21d3a832727d5d4334e734c0878eac3a5a07ae7"
+  revision = "e7ddaaf7b3c285a538c6dfe061d59b73ace965cf"
+
+[[projects]]
+  digest = "1:56dbf15e091bf7926cb33a57cb6bdfc658fc6d3498d2f76f10a97ce7856f1fde"
+  name = "github.com/markbates/inflect"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "24b83195037b3bc61fcda2d28b7b0518bce293b6"
+  version = "v1.0.4"
 
 [[projects]]
   branch = "master"
