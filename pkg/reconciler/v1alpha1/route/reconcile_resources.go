@@ -18,17 +18,8 @@ package route
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"reflect"
-
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
-	apierrs "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/knative/pkg/apis/duck"
 	"github.com/knative/pkg/logging"
@@ -39,6 +30,13 @@ import (
 	"github.com/knative/serving/pkg/reconciler/v1alpha1/route/resources"
 	resourcenames "github.com/knative/serving/pkg/reconciler/v1alpha1/route/resources/names"
 	"github.com/knative/serving/pkg/reconciler/v1alpha1/route/traffic"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 func (c *Reconciler) getClusterIngressForRoute(route *v1alpha1.Route) (*netv1alpha1.ClusterIngress, error) {
@@ -97,21 +95,10 @@ func (c *Reconciler) reconcileClusterIngress(
 	return clusterIngress, err
 }
 
-func (c *Reconciler) reconcilePlaceholderService(ctx context.Context, route *v1alpha1.Route) error {
+func (c *Reconciler) reconcilePlaceholderService(ctx context.Context, route *v1alpha1.Route, ingress *netv1alpha1.ClusterIngress) error {
 	logger := logging.FromContext(ctx)
 	ns := route.Namespace
 	name := resourcenames.K8sService(route)
-
-	ingress, err := c.getClusterIngressForRoute(route)
-	if apierrs.IsNotFound(err) {
-		// Ingress not exist, skip creating.
-		logger.Infof("Ingress for route %s/%s not exist, skip creating placeholder k8s service", ns, name)
-		return nil
-	}
-	if err != nil {
-		// Return errors other than not found error.
-		return err
-	}
 
 	desiredService, err := resources.MakeK8sService(route, ingress)
 	if err != nil {
@@ -135,9 +122,7 @@ func (c *Reconciler) reconcilePlaceholderService(ctx context.Context, route *v1a
 	} else if err != nil {
 		return err
 	} else {
-		// Make sure that the service has the proper specification
-		// Preserve the ClusterIP field in the Service's Spec, if it has been set.
-		desiredService.Spec.ClusterIP = service.Spec.ClusterIP
+		// Make sure that the service has the proper specification.
 		if !equality.Semantic.DeepEqual(service.Spec, desiredService.Spec) {
 			// Don't modify the informers copy
 			existing := service.DeepCopy()
@@ -182,7 +167,7 @@ func (c *Reconciler) reconcileTargetRevisions(ctx context.Context, t *traffic.Tr
 	gcConfig := config.FromContext(ctx).GC
 	lpDebounce := gcConfig.StaleRevisionLastpinnedDebounce
 
-	eg, ctx := errgroup.WithContext(ctx)
+	eg, _ := errgroup.WithContext(ctx)
 	for _, target := range t.Targets {
 		for _, rt := range target {
 			tt := rt.TrafficTarget
@@ -214,16 +199,12 @@ func (c *Reconciler) reconcileTargetRevisions(ctx context.Context, t *traffic.Tr
 				}
 
 				newRev.ObjectMeta.Annotations[serving.RevisionLastPinnedAnnotationKey] = v1alpha1.RevisionLastPinnedString(c.clock.Now())
-				patch, err := duck.CreatePatch(rev, newRev)
-				if err != nil {
-					return err
-				}
-				patchJSON, err := json.Marshal(patch)
+				patch, err := duck.CreateMergePatch(rev, newRev)
 				if err != nil {
 					return err
 				}
 
-				if _, err := c.ServingClientSet.ServingV1alpha1().Revisions(route.Namespace).Patch(rev.Name, types.MergePatchType, patchJSON); err != nil {
+				if _, err := c.ServingClientSet.ServingV1alpha1().Revisions(route.Namespace).Patch(rev.Name, types.MergePatchType, patch); err != nil {
 					c.Logger.Errorf("Unable to set revision annotation: %v", err)
 					return err
 				}
