@@ -68,6 +68,7 @@ var (
 	reqChan               = make(chan queue.ReqEvent, requestCountingQueueLength)
 	statSink              *websocket.ManagedConnection
 	logger                *zap.SugaredLogger
+	baseLogger            *zap.SugaredLogger
 	breaker               *queue.Breaker
 
 	h2cProxy  *httputil.ReverseProxy
@@ -79,9 +80,9 @@ var (
 )
 
 func initEnv() {
-	podName = util.GetRequiredEnvOrFatal("SERVING_POD", logger)
-	servingNamespace = util.GetRequiredEnvOrFatal("SERVING_NAMESPACE", logger)
-	servingRevision = util.GetRequiredEnvOrFatal("SERVING_REVISION", logger)
+	podName = util.GetRequiredEnvOrFatal("SERVING_POD")
+	servingNamespace = util.GetRequiredEnvOrFatal("SERVING_NAMESPACE")
+	servingRevision = os.Getenv("SERVING_REVISION", logger)
 	servingAutoscaler = util.GetRequiredEnvOrFatal("SERVING_AUTOSCALER", logger)
 	servingAutoscalerPort = util.GetRequiredEnvOrFatal("SERVING_AUTOSCALER_PORT", logger)
 
@@ -102,6 +103,10 @@ func statReporter() {
 		sm := autoscaler.StatMessage{
 			Stat: *s,
 			Key:  servingRevisionKey,
+		}
+		if servingRevision == "" {
+			logger.info("Instance in the pool.")
+			continue
 		}
 		err := statSink.Send(sm)
 		if err != nil {
@@ -210,18 +215,20 @@ func setupAdminHandlers(server *http.Server) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/%s", queue.RequestQueueHealthPath), health.healthHandler)
 	mux.HandleFunc(fmt.Sprintf("/%s", queue.RequestQueueQuitPath), health.quitHandler)
+	mux.HandleFunc(fmt.Sprintf("/%s", queue.RequestQueuePoolMigratePath), poolMigrateHandler)
 	server.Handler = mux
 	server.ListenAndServe()
 }
 
 func main() {
 	flag.Parse()
-	logger, _ = logging.NewLogger(os.Getenv("SERVING_LOGGING_CONFIG"), os.Getenv("SERVING_LOGGING_LEVEL"))
-	logger = logger.Named("queueproxy")
-	defer logger.Sync()
 
 	initEnv()
-	logger = logger.With(
+	baseLogger, _ = logging.NewLogger(os.Getenv("SERVING_LOGGING_CONFIG"), os.Getenv("SERVING_LOGGING_LEVEL"))
+	baseLogger = baseLogger.Named("queueproxy")
+	defer baseLogger.Sync()
+
+	logger = baseLogger.With(
 		zap.String(logkey.Key, servingRevisionKey),
 		zap.String(logkey.Pod, podName))
 
@@ -293,4 +300,14 @@ func main() {
 
 	go server.ListenAndServe()
 	setupAdminHandlers(adminServer)
+}
+
+func poolMigrateHandler(w http.ResponseWriter, r *http.Request) {
+	servingRevision = r.FormValue("revision")
+	servingRevisionKey = autoscaler.NewKpaKey(servingNamespace, servingRevision)
+
+	logger = baseLogger.With(
+		zap.String(logkey.Key, servingRevisionKey),
+		zap.String(logkey.Pod, podName))
+	return
 }
