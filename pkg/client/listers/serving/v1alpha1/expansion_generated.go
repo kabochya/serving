@@ -23,6 +23,14 @@ type ConfigurationListerExpansion interface{}
 // ConfigurationNamespaceLister.
 type ConfigurationNamespaceListerExpansion interface{}
 
+// FunctionListerExpansion allows custom methods to be added to
+// FunctionLister.
+type FunctionListerExpansion interface{}
+
+// FunctionNamespaceListerExpansion allows custom methods to be added to
+// FunctionNamespaceLister.
+type FunctionNamespaceListerExpansion interface{}
+
 // RevisionListerExpansion allows custom methods to be added to
 // RevisionLister.
 type RevisionListerExpansion interface{}

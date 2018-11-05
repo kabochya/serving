@@ -25,6 +25,7 @@ import (
 type ServingV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	ConfigurationsGetter
+	FunctionsGetter
 	RevisionsGetter
 	RoutesGetter
 	ServicesGetter
@@ -37,6 +38,10 @@ type ServingV1alpha1Client struct {
 
 func (c *ServingV1alpha1Client) Configurations(namespace string) ConfigurationInterface {
 	return newConfigurations(c, namespace)
+}
+
+func (c *ServingV1alpha1Client) Functions(namespace string) FunctionInterface {
+	return newFunctions(c, namespace)
 }
 
 func (c *ServingV1alpha1Client) Revisions(namespace string) RevisionInterface {

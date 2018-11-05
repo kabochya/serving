@@ -13,14 +13,29 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package v1alpha1
 
-type ConfigurationExpansion interface{}
+import (
+	"strconv"
 
-type FunctionExpansion interface{}
+	"github.com/knative/pkg/apis"
+	"k8s.io/apimachinery/pkg/api/equality"
+)
 
-type RevisionExpansion interface{}
+func (f *Function) Validate() *apis.FieldError {
+	return ValidateObjectMetadata(f.GetObjectMeta()).ViaField("metadata").
+		Also(f.Spec.Validate().ViaField("spec"))
+}
 
-type RouteExpansion interface{}
+func (fs *FunctionSpec) Validate() *apis.FieldError {
+	if equality.Semantic.DeepEqual(fs, &FunctionSpec{}) {
+		return apis.ErrMissingField(apis.CurrentField)
+	}
 
-type ServiceExpansion interface{}
+	if fs.PoolSize <= 0 {
+		return apis.ErrInvalidValue(strconv.Itoa(int(fs.PoolSize)), "poolSize")
+	}
+
+	return nil
+}

@@ -23,6 +23,8 @@ import (
 type Interface interface {
 	// Configurations returns a ConfigurationInformer.
 	Configurations() ConfigurationInformer
+	// Functions returns a FunctionInformer.
+	Functions() FunctionInformer
 	// Revisions returns a RevisionInformer.
 	Revisions() RevisionInformer
 	// Routes returns a RouteInformer.
@@ -45,6 +47,11 @@ func New(f internalinterfaces.SharedInformerFactory, namespace string, tweakList
 // Configurations returns a ConfigurationInformer.
 func (v *version) Configurations() ConfigurationInformer {
 	return &configurationInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
+}
+
+// Functions returns a FunctionInformer.
+func (v *version) Functions() FunctionInformer {
+	return &functionInformer{factory: v.factory, namespace: v.namespace, tweakListOptions: v.tweakListOptions}
 }
 
 // Revisions returns a RevisionInformer.

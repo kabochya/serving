@@ -29,6 +29,10 @@ func (c *FakeServingV1alpha1) Configurations(namespace string) v1alpha1.Configur
 	return &FakeConfigurations{c, namespace}
 }
 
+func (c *FakeServingV1alpha1) Functions(namespace string) v1alpha1.FunctionInterface {
+	return &FakeFunctions{c, namespace}
+}
+
 func (c *FakeServingV1alpha1) Revisions(namespace string) v1alpha1.RevisionInterface {
 	return &FakeRevisions{c, namespace}
 }
