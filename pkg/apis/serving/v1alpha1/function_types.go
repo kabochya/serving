@@ -47,9 +47,6 @@ type Function struct {
 var _ apis.Validatable = (*Function)(nil)
 var _ apis.Defaultable = (*Function)(nil)
 
-// Check that FunctionStatus may have its conditions managed.
-var _ duckv1alpha1.ConditionsAccessor = (*FunctionStatus)(nil)
-
 // Check that we can create OwnerReferences to a Function.
 var _ kmeta.OwnerRefable = (*Function)(nil)
 
@@ -66,6 +63,7 @@ type FunctionSpec struct {
 	Generation int64 `json:"generation,omitempty"`
 
 	// PoolSize describes the desired size of the function pool
+	// +optional
 	PoolSize int64 `json:"poolSize,omitempty`
 }
 
