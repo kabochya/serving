@@ -20,8 +20,6 @@ import (
 	"flag"
 	"log"
 
-	"go.uber.org/zap"
-
 	"github.com/knative/pkg/configmap"
 	"github.com/knative/pkg/logging/logkey"
 	"github.com/knative/pkg/signals"
@@ -31,6 +29,7 @@ import (
 	"github.com/knative/serving/pkg/apis/serving/v1alpha1"
 	"github.com/knative/serving/pkg/logging"
 	"github.com/knative/serving/pkg/system"
+	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -92,6 +91,7 @@ func main() {
 			v1alpha1.SchemeGroupVersion.WithKind("Configuration"): &v1alpha1.Configuration{},
 			v1alpha1.SchemeGroupVersion.WithKind("Route"):         &v1alpha1.Route{},
 			v1alpha1.SchemeGroupVersion.WithKind("Service"):       &v1alpha1.Service{},
+			v1alpha1.SchemeGroupVersion.WithKind("Function"):      &v1alpha1.Function{},
 			kpa.SchemeGroupVersion.WithKind("PodAutoscaler"):      &kpa.PodAutoscaler{},
 			net.SchemeGroupVersion.WithKind("ClusterIngress"):     &net.ClusterIngress{},
 		},
