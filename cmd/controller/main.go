@@ -21,35 +21,31 @@ import (
 	"log"
 	"time"
 
-	"github.com/knative/pkg/configmap"
-
-	"github.com/knative/pkg/controller"
-	"github.com/knative/serving/pkg/logging"
-	"github.com/knative/serving/pkg/reconciler"
-
-	"github.com/knative/serving/pkg/system"
-
-	"k8s.io/client-go/dynamic"
-	kubeinformers "k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/tools/clientcmd"
-	// Uncomment the following line to load the gcp plugin (only required to authenticate against GKE clusters).
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
-
 	cachingclientset "github.com/knative/caching/pkg/client/clientset/versioned"
 	cachinginformers "github.com/knative/caching/pkg/client/informers/externalversions"
 	sharedclientset "github.com/knative/pkg/client/clientset/versioned"
 	sharedinformers "github.com/knative/pkg/client/informers/externalversions"
+	"github.com/knative/pkg/configmap"
+	"github.com/knative/pkg/controller"
 	"github.com/knative/pkg/signals"
 	clientset "github.com/knative/serving/pkg/client/clientset/versioned"
 	informers "github.com/knative/serving/pkg/client/informers/externalversions"
+	"github.com/knative/serving/pkg/logging"
+	"github.com/knative/serving/pkg/reconciler"
 	"github.com/knative/serving/pkg/reconciler/v1alpha1/clusteringress"
 	"github.com/knative/serving/pkg/reconciler/v1alpha1/configuration"
+	"github.com/knative/serving/pkg/reconciler/v1alpha1/function"
 	"github.com/knative/serving/pkg/reconciler/v1alpha1/labeler"
 	"github.com/knative/serving/pkg/reconciler/v1alpha1/revision"
 	"github.com/knative/serving/pkg/reconciler/v1alpha1/route"
 	"github.com/knative/serving/pkg/reconciler/v1alpha1/service"
+	"github.com/knative/serving/pkg/system"
+	"k8s.io/client-go/dynamic"
+	kubeinformers "k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
+	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/clientcmd" // Uncomment the following line to load the gcp plugin (only required to authenticate against GKE clusters).
 )
 
 const (
@@ -132,6 +128,7 @@ func main() {
 	routeInformer := servingInformerFactory.Serving().V1alpha1().Routes()
 	configurationInformer := servingInformerFactory.Serving().V1alpha1().Configurations()
 	revisionInformer := servingInformerFactory.Serving().V1alpha1().Revisions()
+	functionInformer := servingInformerFactory.Serving().V1alpha1().Functions()
 	kpaInformer := servingInformerFactory.Autoscaling().V1alpha1().PodAutoscalers()
 	clusterIngressInformer := servingInformerFactory.Networking().V1alpha1().ClusterIngresses()
 	deploymentInformer := kubeInformerFactory.Apps().V1().Deployments()
@@ -185,6 +182,12 @@ func main() {
 			clusterIngressInformer,
 			virtualServiceInformer,
 		),
+		function.NewController(
+			opt,
+			functionInformer,
+			revisionInformer,
+			deploymentInformer,
+		),
 	}
 
 	// Watch the logging config map and dynamically update logging levels.
@@ -206,6 +209,7 @@ func main() {
 		routeInformer.Informer().HasSynced,
 		configurationInformer.Informer().HasSynced,
 		revisionInformer.Informer().HasSynced,
+		functionInformer.Informer().HasSynced,
 		kpaInformer.Informer().HasSynced,
 		clusterIngressInformer.Informer().HasSynced,
 		imageInformer.Informer().HasSynced,
