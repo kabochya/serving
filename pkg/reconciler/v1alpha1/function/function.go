@@ -53,6 +53,9 @@ type Reconciler struct {
 	functionLister   listers.FunctionLister
 	revisionLister   listers.RevisionLister
 	deploymentLister appsv1listers.DeploymentLister
+	configMapLister  corev1listers.ConfigMapLister
+
+	configStore configStore
 }
 
 // Check that our Reconciler implements controller.Reconciler
@@ -72,6 +75,7 @@ func NewController(
 		functionLister:   functionInformer.Lister(),
 		revisionLister:   revisionInformer.Lister(),
 		deploymentLister: deploymentInformer.Lister(),
+		configMapLister:  configMapInformer.Lister(),
 	}
 	impl := controller.NewImpl(c, c.Logger, "Functions", reconciler.MustNewStatsReporter("Functions", c.Logger))
 
@@ -91,6 +95,18 @@ func NewController(
 		},
 	})
 
+	configMapInformer.Informer().AddEventHandler(cache.FilteringResourceEventHandler{
+		FilterFunc: controller.Filter(v1alpha1.SchemeGroupVersion.WithKind("Function")),
+		Handler: cache.ResourceEventHandlerFuncs{
+			AddFunc:    impl.EnqueueControllerOf,
+			UpdateFunc: controller.PassNew(impl.EnqueueControllerOf),
+			DeleteFunc: impl.EnqueueControllerOf,
+		},
+	})
+
+	c.configStore = config.NewStore(c.Logger.Named("config-store"))
+	c.configStore.WatchConfigs(opt.ConfigMapWatcher)
+
 	return impl
 }
 
@@ -105,6 +121,8 @@ func (c *Reconciler) Reconcile(ctx context.Context, key string) error {
 		return nil
 	}
 	logger := logging.FromContext(ctx)
+
+	ctx = c.configStore.ToContext(ctx)
 
 	// Get the Function resource with this namespace/name
 	original, err := c.functionLister.Functions(namespace).Get(name)
