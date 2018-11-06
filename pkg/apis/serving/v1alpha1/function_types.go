@@ -20,6 +20,7 @@ import (
 	"github.com/knative/pkg/apis"
 	duckv1alpha1 "github.com/knative/pkg/apis/duck/v1alpha1"
 	"github.com/knative/pkg/kmeta"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -65,10 +66,28 @@ type FunctionSpec struct {
 	// PoolSize describes the desired size of the function pool
 	// +optional
 	PoolSize int64 `json:"poolSize,omitempty`
+
+	// ServiceAccountName holds the name of the Kubernetes service account
+	// as which the underlying K8s resources should be run. If unspecified
+	// this will default to the "default" service account for the namespace
+	// in which the Revision exists.
+	// This may be used to provide access to private container images by
+	// following: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/#add-imagepullsecrets-to-a-service-account
+	// TODO(ZhiminXiang): verify the corresponding service account exists.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
+	// Container defines the unit of execution for this Function.
+	// In the context of a Function, we disallow a number of the fields of
+	// this Container, including: name, resources, ports, and volumeMounts.
+	// TODO(mattmoor): Link to the runtime contract tracked by:
+	// https://github.com/knative/serving/issues/627
+	// +optional
+	Container corev1.Container `json:"container,omitempty"`
 }
 
 const (
-	// FunctionConditionReady is set when the Function is starting to materialize
+	// FunctionConditionReady is set when the function is starting to materialize
 	// runtime resources, and becomes true when those resources are ready.
 	FunctionConditionReady = duckv1alpha1.ConditionReady
 )
@@ -130,4 +149,16 @@ func (fs *FunctionStatus) InitializeConditions() {
 // conditions by implementing the duckv1alpha1.Conditions interface.
 func (fs *FunctionStatus) SetConditions(conditions duckv1alpha1.Conditions) {
 	fs.Conditions = conditions
+}
+
+func (fs *FunctionStatus) MarkDeploying(reason string) {
+	funcCondSet.Manage(fs).MarkUnknown(FunctionConditionReady, reason, "")
+}
+
+func (fs *FunctionStatus) MarkReady() {
+	funcCondSet.Manage(fs).MarkTrue(FunctionConditionReady)
+}
+
+func (fs *FunctionStatus) MarkProgressDeadlineExceeded(message string) {
+	funcCondSet.Manage(fs).MarkFalse(FunctionConditionReady, "ProgressDeadlineExceeded", message)
 }

@@ -56,4 +56,7 @@ const (
 	// ConfigurationGenerationLabelKey is the label key attached to a Revision indicating the
 	// generation of the Configuration that created this revision
 	ConfigurationGenerationLabelKey = GroupName + "/configurationGeneration"
+
+	// FunctionLabelKey is the label key attached to a Revision to indicate which function pool it is referencing
+	FunctionLabelKey = GroupName + "/function"
 )
