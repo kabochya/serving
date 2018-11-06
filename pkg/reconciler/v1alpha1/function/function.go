@@ -207,7 +207,7 @@ func (c *Reconciler) updateStatus(desired *v1alpha1.Function) (*v1alpha1.Functio
 		existing.Status = desired.Status
 		functionClient := c.ServingClientSet.ServingV1alpha1().Functions(desired.Namespace)
 		// TODO: for CRD there's no updatestatus, so use normal update.
-		return functionClient.Update(desired)
+		return functionClient.Update(existing)
 	}
 	return function, nil
 }
