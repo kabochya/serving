@@ -24,6 +24,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/knative/pkg/configmap"
 	"github.com/knative/pkg/controller"
+	"github.com/knative/pkg/kmeta"
 	"github.com/knative/pkg/logging"
 	"github.com/knative/serving/pkg/apis/serving"
 	"github.com/knative/serving/pkg/apis/serving/v1alpha1"
@@ -205,9 +206,9 @@ func (c *Reconciler) updateStatus(desired *v1alpha1.Function) (*v1alpha1.Functio
 		// Don't modify the informers copy
 		existing := function.DeepCopy()
 		existing.Status = desired.Status
-		functionClient := c.ServingClientSet.ServingV1alpha1().Functions(desired.Namespace)
+
 		// TODO: for CRD there's no updatestatus, so use normal update.
-		return functionClient.Update(existing)
+		return c.ServingClientSet.ServingV1alpha1().Functions(desired.Namespace).Update(existing)
 	}
 	return function, nil
 }
@@ -269,7 +270,9 @@ func (c *Reconciler) createDeployment(ctx context.Context, function *v1alpha1.Fu
 	poolSize := int32(function.Spec.PoolSize)
 	deployment.Spec.Replicas = &poolSize
 
-	deployment.ObjectMeta.OwnerReferences = nil
+	deployment.ObjectMeta.OwnerReferences = []metav1.OwnerReference{
+		*kmeta.NewControllerRef(function),
+	}
 	deployment.Spec.Selector = &metav1.LabelSelector{MatchLabels: deployment.Labels}
 	deployment.Spec.Template.ObjectMeta.Labels = podSpecLabels
 	deployment.Spec.Template.Spec.ServiceAccountName = function.Spec.ServiceAccountName
