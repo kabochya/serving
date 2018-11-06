@@ -33,7 +33,7 @@ func (fs *FunctionSpec) Validate() *apis.FieldError {
 		return apis.ErrMissingField(apis.CurrentField)
 	}
 
-	if fs.PoolSize <= 0 {
+	if fs.PoolSize < 0 {
 		return apis.ErrInvalidValue(strconv.Itoa(int(fs.PoolSize)), "poolSize")
 	}
 

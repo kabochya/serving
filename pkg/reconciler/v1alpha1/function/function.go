@@ -169,6 +169,7 @@ func (c *Reconciler) reconcile(ctx context.Context, function *v1alpha1.Function)
 	deploymentName := resourcenames.Deployment(function)
 	deployment, getDepErr := c.deploymentLister.Deployments(function.Namespace).Get(deploymentName)
 	if apierrs.IsNotFound(getDepErr) {
+		function.Status.MarkDeploying("Deploying")
 		var err error
 		deployment, err = c.createDeployment(ctx, function)
 		if err != nil {
