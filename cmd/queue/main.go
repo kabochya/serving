@@ -80,9 +80,9 @@ var (
 )
 
 func initEnv() {
-	podName = util.GetRequiredEnvOrFatal("SERVING_POD")
-	servingNamespace = util.GetRequiredEnvOrFatal("SERVING_NAMESPACE")
-	servingRevision = os.Getenv("SERVING_REVISION", logger)
+	podName = util.GetRequiredEnvOrFatal("SERVING_POD", logger)
+	servingNamespace = util.GetRequiredEnvOrFatal("SERVING_NAMESPACE", logger)
+	servingRevision = os.Getenv("SERVING_REVISION")
 	servingAutoscaler = util.GetRequiredEnvOrFatal("SERVING_AUTOSCALER", logger)
 	servingAutoscalerPort = util.GetRequiredEnvOrFatal("SERVING_AUTOSCALER_PORT", logger)
 
@@ -105,7 +105,7 @@ func statReporter() {
 			Key:  servingRevisionKey,
 		}
 		if servingRevision == "" {
-			logger.info("Instance in the pool.")
+			logger.Info("Instance in the pool.")
 			continue
 		}
 		err := statSink.Send(sm)

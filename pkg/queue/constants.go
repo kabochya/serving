@@ -44,4 +44,7 @@ const (
 	// RequestQueueHealthPath specifies the path for health checks for
 	// queue-proxy.
 	RequestQueueHealthPath = "health"
+
+	// RequestQueuePoolMigratePath specifiies the path to migrate a pod
+	RequestQueuePoolMigratePath = "migratepool"
 )
