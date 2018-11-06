@@ -96,13 +96,6 @@ var funcCondSet = duckv1alpha1.NewLivingConditionSet()
 
 // FunctionStatus communicates the observed state of the Function (from the controller).
 type FunctionStatus struct {
-	// ServiceName holds the name of a core Kubernetes Service resource that
-	// load balances over the pods backing this Function. When the Function
-	// is Active, this service would be an appropriate ingress target for
-	// targeting the Function.
-	// +optional
-	ServiceName string `json:"serviceName,omitempty"`
-
 	// Conditions communicates information about ongoing/complete
 	// reconciliation processes that bring the "spec" inline with the observed
 	// state of the world.

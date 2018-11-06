@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/knative/pkg/controller"
 	"github.com/knative/pkg/logging"
 	"github.com/knative/serving/pkg/apis/serving"
@@ -119,6 +120,7 @@ func (c *Reconciler) Reconcile(ctx context.Context, key string) error {
 	function := original.DeepCopy()
 
 	err = c.reconcile(ctx, function)
+	logger.Infof("Updating Status (-old, +new): %v", cmp.Diff(original, function))
 	if equality.Semantic.DeepEqual(original.Status, function.Status) {
 		// If we didn't change anything then don't call updateStatus.
 		// This is important because the copy we loaded from the informer's
