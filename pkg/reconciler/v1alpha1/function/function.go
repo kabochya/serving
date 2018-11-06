@@ -22,6 +22,7 @@ import (
 	"reflect"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/knative/pkg/configmap"
 	"github.com/knative/pkg/controller"
 	"github.com/knative/pkg/logging"
 	"github.com/knative/serving/pkg/apis/serving"
@@ -39,11 +40,19 @@ import (
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	appsv1informers "k8s.io/client-go/informers/apps/v1"
+	corev1informers "k8s.io/client-go/informers/core/v1"
 	appsv1listers "k8s.io/client-go/listers/apps/v1"
+	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 )
 
 const controllerAgentName = "function-controller"
+
+type configStore interface {
+	ToContext(ctx context.Context) context.Context
+	WatchConfigs(w configmap.Watcher)
+	Load() *config.Config
+}
 
 // Reconciler implements controller.Reconciler for Service resources.
 type Reconciler struct {
@@ -68,6 +77,7 @@ func NewController(
 	functionInformer servinginformers.FunctionInformer,
 	revisionInformer servinginformers.RevisionInformer,
 	deploymentInformer appsv1informers.DeploymentInformer,
+	configMapInformer corev1informers.ConfigMapInformer,
 ) *controller.Impl {
 
 	c := &Reconciler{

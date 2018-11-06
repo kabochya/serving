@@ -187,6 +187,7 @@ func main() {
 			functionInformer,
 			revisionInformer,
 			deploymentInformer,
+			configMapInformer,
 		),
 	}
 
