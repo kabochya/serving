@@ -26,6 +26,7 @@ import (
 	"github.com/knative/pkg/controller"
 	"github.com/knative/pkg/kmeta"
 	"github.com/knative/pkg/logging"
+	"github.com/knative/pkg/logging/logkey"
 	"github.com/knative/serving/pkg/apis/serving"
 	"github.com/knative/serving/pkg/apis/serving/v1alpha1"
 	servinginformers "github.com/knative/serving/pkg/client/informers/externalversions/serving/v1alpha1"
@@ -61,7 +62,6 @@ type Reconciler struct {
 
 	// listers index properties about resources
 	functionLister   listers.FunctionLister
-	revisionLister   listers.RevisionLister
 	deploymentLister appsv1listers.DeploymentLister
 	configMapLister  corev1listers.ConfigMapLister
 
@@ -76,7 +76,6 @@ var _ controller.Reconciler = (*Reconciler)(nil)
 func NewController(
 	opt reconciler.Options,
 	functionInformer servinginformers.FunctionInformer,
-	revisionInformer servinginformers.RevisionInformer,
 	deploymentInformer appsv1informers.DeploymentInformer,
 	configMapInformer corev1informers.ConfigMapInformer,
 ) *controller.Impl {
@@ -84,7 +83,6 @@ func NewController(
 	c := &Reconciler{
 		Base:             reconciler.NewBase(opt, controllerAgentName),
 		functionLister:   functionInformer.Lister(),
-		revisionLister:   revisionInformer.Lister(),
 		deploymentLister: deploymentInformer.Lister(),
 		configMapLister:  configMapInformer.Lister(),
 	}
@@ -149,25 +147,29 @@ func (c *Reconciler) Reconcile(ctx context.Context, key string) error {
 	function := original.DeepCopy()
 
 	err = c.reconcile(ctx, function)
-	logger.Infof("Updating Status (-old, +new): %v", cmp.Diff(original, function))
 	if equality.Semantic.DeepEqual(original.Status, function.Status) {
 		// If we didn't change anything then don't call updateStatus.
 		// This is important because the copy we loaded from the informer's
 		// cache may be stale and we don't want to overwrite a prior update
 		// to status with this stale state.
-	} else if _, err := c.updateStatus(function); err != nil {
-		logger.Warn("Failed to update function status", zap.Error(err))
-		return err
+	} else {
+		logger.Infof("Updating Status (-old, +new): %v", cmp.Diff(original, function))
+		if _, err := c.updateStatus(function); err != nil {
+			logger.Warn("Failed to update function status", zap.Error(err))
+			return err
+		}
 	}
 	return err
 }
 
 func (c *Reconciler) reconcile(ctx context.Context, function *v1alpha1.Function) error {
-	logger := logging.FromContext(ctx)
 	function.Status.InitializeConditions()
 
 	deploymentName := resourcenames.Deployment(function)
 	deployment, getDepErr := c.deploymentLister.Deployments(function.Namespace).Get(deploymentName)
+
+	logger := logging.FromContext(ctx).With(zap.String(logkey.Deployment, deploymentName))
+
 	if apierrs.IsNotFound(getDepErr) {
 		function.Status.MarkDeploying("Deploying")
 		var err error

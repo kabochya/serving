@@ -185,7 +185,6 @@ func main() {
 		function.NewController(
 			opt,
 			functionInformer,
-			revisionInformer,
 			deploymentInformer,
 			configMapInformer,
 		),

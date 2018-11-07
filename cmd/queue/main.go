@@ -80,11 +80,11 @@ var (
 )
 
 func initEnv() {
-	podName = util.GetRequiredEnvOrFatal("SERVING_POD", logger)
-	servingNamespace = util.GetRequiredEnvOrFatal("SERVING_NAMESPACE", logger)
+	podName = util.GetRequiredEnvOrFatal("SERVING_POD", baseLogger)
+	servingNamespace = util.GetRequiredEnvOrFatal("SERVING_NAMESPACE", baseLogger)
 	servingRevision = os.Getenv("SERVING_REVISION")
-	servingAutoscaler = util.GetRequiredEnvOrFatal("SERVING_AUTOSCALER", logger)
-	servingAutoscalerPort = util.GetRequiredEnvOrFatal("SERVING_AUTOSCALER_PORT", logger)
+	servingAutoscaler = util.GetRequiredEnvOrFatal("SERVING_AUTOSCALER", baseLogger)
+	servingAutoscalerPort = util.GetRequiredEnvOrFatal("SERVING_AUTOSCALER_PORT", baseLogger)
 
 	// TODO(mattmoor): Move this key to be in terms of the KPA.
 	servingRevisionKey = autoscaler.NewKpaKey(servingNamespace, servingRevision)
@@ -97,16 +97,16 @@ func statReporter() {
 			logger.Warn("Stat sink not (yet) connected.")
 			continue
 		}
+		if servingRevision == "" {
+			logger.Info("Instance in the pool.")
+			continue
+		}
 		if !health.isAlive() {
 			s.LameDuck = true
 		}
 		sm := autoscaler.StatMessage{
 			Stat: *s,
 			Key:  servingRevisionKey,
-		}
-		if servingRevision == "" {
-			logger.Info("Instance in the pool.")
-			continue
 		}
 		err := statSink.Send(sm)
 		if err != nil {
