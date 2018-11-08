@@ -238,7 +238,7 @@ func (c *Reconciler) createDeployment(ctx context.Context, function *v1alpha1.Fu
 	// reuse revision makeDeployment for now
 	poolRev := &v1alpha1.Revision{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        resourcenames.Deployment(function),
+			Name:        resourcenames.Pool(function),
 			Namespace:   function.Namespace,
 			Labels:      function.ObjectMeta.Labels,
 			Annotations: function.ObjectMeta.Annotations,
