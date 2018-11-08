@@ -285,7 +285,9 @@ func (c *Reconciler) createDeployment(ctx context.Context, function *v1alpha1.Fu
 		if k.Name == "SERVING_NAMESPACE" {
 			env[i].Value = function.Namespace
 		} else if k.Name == "SERVING_REVISION" {
-			env[i].Value = function.Name
+			env[i].Value = ""
+		} else if k.Name == "SERVING_CONFIGURATION" {
+			env[i].Value = "PLACEHOLDER"
 		}
 	}
 
