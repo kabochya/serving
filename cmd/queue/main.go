@@ -223,11 +223,11 @@ func setupAdminHandlers(server *http.Server) {
 func main() {
 	flag.Parse()
 
-	initEnv()
 	baseLogger, _ = logging.NewLogger(os.Getenv("SERVING_LOGGING_CONFIG"), os.Getenv("SERVING_LOGGING_LEVEL"))
 	baseLogger = baseLogger.Named("queueproxy")
 	defer baseLogger.Sync()
 
+	initEnv()
 	logger = baseLogger.With(
 		zap.String(logkey.Key, servingRevisionKey),
 		zap.String(logkey.Pod, podName))
