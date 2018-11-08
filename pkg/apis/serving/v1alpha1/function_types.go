@@ -65,7 +65,7 @@ type FunctionSpec struct {
 
 	// PoolSize describes the desired size of the function pool
 	// +optional
-	PoolSize int64 `json:"poolSize,omitempty`
+	PoolSize int64 `json:"poolSize,omitempty"`
 
 	// ServiceAccountName holds the name of the Kubernetes service account
 	// as which the underlying K8s resources should be run. If unspecified
