@@ -132,8 +132,13 @@ func main() {
 
 	kpaInformer := servingInformerFactory.Autoscaling().V1alpha1().PodAutoscalers()
 	endpointsInformer := kubeInformerFactory.Core().V1().Endpoints()
+	podInformer := kubeInformerFactory.Core().V1().Pods()
+	replicaSetInformer := kubeInformerFactory.Apps().V1().ReplicaSets()
+	deploymentInformer := kubeInformerFactory.Apps().V1().Deployments()
+	functionInformer := servingInformerFactory.Serving().V1alpha1().Functions()
 
-	kpaScaler := autoscaling.NewKPAScaler(servingClientSet, scaleClient, logger, configMapWatcher)
+	poolMigrator := autoscaling.NewMigrator(kubeClientSet, servingClientSet, functionInformer, podInformer, replicaSetInformer, deploymentInformer, logger)
+	kpaScaler := autoscaling.NewPoolKPAScaler(servingClientSet, scaleClient, poolMigrator, logger, configMapWatcher)
 	ctl := autoscaling.NewController(&opt, kpaInformer, endpointsInformer, multiScaler, kpaScaler)
 
 	// Start the serving informer factory.
@@ -148,6 +153,10 @@ func main() {
 	for i, synced := range []cache.InformerSynced{
 		kpaInformer.Informer().HasSynced,
 		endpointsInformer.Informer().HasSynced,
+		podInformer.Informer().HasSynced,
+		replicaSetInformer.Informer().HasSynced,
+		deploymentInformer.Informer().HasSynced,
+		functionInformer.Informer().HasSynced,
 	} {
 		if ok := cache.WaitForCacheSync(stopCh, synced); !ok {
 			logger.Fatalf("failed to wait for cache at index %v to sync", i)
