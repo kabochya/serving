@@ -4,13 +4,10 @@ import (
 	kpa "github.com/knative/serving/pkg/apis/autoscaling/v1alpha1"
 	"github.com/knative/serving/pkg/apis/serving"
 	clientset "github.com/knative/serving/pkg/client/clientset/versioned"
-	servinginformers "github.com/knative/serving/pkg/client/informers/externalversions/serving/v1alpha1"
 	servinglisters "github.com/knative/serving/pkg/client/listers/serving/v1alpha1"
 	"go.uber.org/zap"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	appsv1informers "k8s.io/client-go/informers/apps/v1"
-	corev1informers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	appsv1listers "k8s.io/client-go/listers/apps/v1"
 	corev1listers "k8s.io/client-go/listers/core/v1"
@@ -28,22 +25,14 @@ type migrator struct {
 }
 
 // NewMigrator creates a migrator
-func NewMigrator(kubeClientSet kubernetes.Interface, servingClientSet clientset.Interface,
-	functionInformer servinginformers.FunctionInformer, podInformer corev1informers.PodInformer,
-	replicaSetInformer appsv1informers.ReplicaSetInformer, deploymentInformer appsv1informers.DeploymentInformer,
-	logger *zap.SugaredLogger) Migrator {
+func NewMigrator(kubeClientSet kubernetes.Interface, servingClientSet clientset.Interface, logger *zap.SugaredLogger) Migrator {
 
 	return &migrator{
 		kubeClientSet:    kubeClientSet,
 		servingClientSet: servingClientSet,
-		functionLister:   functionInformer.Lister(),
-		replicaSetLister: replicaSetInformer.Lister(),
-		deploymentLister: deploymentInformer.Lister(),
 		logger:           logger,
 	}
 }
-
-type lsr metav1.LabelSelectorRequirement
 
 func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentScale int32) (int32, error) {
 	ns := kpa.Namespace
