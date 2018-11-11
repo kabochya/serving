@@ -50,7 +50,7 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 	f := kpa.Labels[serving.FunctionLabelKey]
 	dn := kpa.Spec.ScaleTargetRef.Name
 	rev := kpa.Labels[serving.RevisionLabelKey]
-	deltaScale = desiredScale - currentScale
+	deltaScale := desiredScale - currentScale
 
 	d, err := m.deploymentLister.Deployments(ns).Get(dn)
 	if err != nil {
