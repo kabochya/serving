@@ -10,7 +10,7 @@ rules:
     resources: ["ingresses","deployments"]
     verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
   - apiGroups: ["apps"]
-    resources: ["deployments", "deployments/scale", "statefulsets"]
+    resources: ["deployments", "deployments/scale", "statefulsets", "replicaSets"]
     verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations"]
