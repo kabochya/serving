@@ -37,7 +37,7 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 	deltaScale := desiredScale - currentScale
 	emptyGetOpts := metav1.GetOptions{}
 
-	d, err := m.kubeClientSet.Apps().Deployments(ns).Get(dn, emptyGetOpts)
+	d, err := m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Get(dn, emptyGetOpts)
 	if err != nil {
 		m.logger.Errorf("Failed to find corresponding deployment %s for KPA: %v", dn, zap.Error(err))
 		return desiredScale, err
@@ -48,7 +48,7 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 	dclone.Spec.Paused = true
 	dclone.Spec.Template.Labels["tmp"] = "true"
 	dclone.Spec.Selector.MatchLabels["tmp"] = "true"
-	_, err = m.kubeClientSet.Apps().Deployments(ns).Update(dclone)
+	_, err = m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Update(dclone)
 	if err != nil {
 		m.logger.Errorf("Failed to pause deployment %s: %v", dn, zap.Error(err))
 		return desiredScale, err
@@ -65,7 +65,7 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 		LabelSelector: poolsel,
 	}
 
-	poolrsList, err := m.kubeClientSet.Apps().ReplicaSets(ns).List(poolListOpts)
+	poolrsList, err := m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).List(poolListOpts)
 	if err != nil {
 		m.logger.Errorf("Failed to find corresponding replicaSet for function %s: %v", f, zap.Error(err))
 		return desiredScale, err
@@ -104,7 +104,7 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 		m.logger.Errorf("Failed to parse selector: %v", zap.Error(err))
 		return desiredScale, err
 	}
-	targetrss, err := m.kubeClientSet.Apps().ReplicaSets(ns).List(metav1.ListOptions{LabelSelector: targetrsssel})
+	targetrss, err := m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).List(metav1.ListOptions{LabelSelector: targetrsssel})
 	if err != nil {
 		m.logger.Errorf("Failed to find target replicaSet of revision %s: %v", rev, zap.Error(err))
 		return desiredScale, err
@@ -135,7 +135,7 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 		serving.FunctionLabelKey: f,
 	}
 
-	targetrs, err = m.kubeClientSet.Apps().ReplicaSets(ns).Update(targetrs)
+	targetrs, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Update(targetrs)
 	if err != nil {
 		m.logger.Errorf("Failed to update target rs %s: %v", targetrs.Name, zap.Error(err))
 		return desiredScale, nil
@@ -155,14 +155,14 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 		MatchLabels: targetrs.Labels,
 	}
 	targetrs.Spec.Template.Labels = targetrs.Labels
-	_, err = m.kubeClientSet.Apps().ReplicaSets(ns).Update(targetrs)
+	_, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Update(targetrs)
 
 	// Step 6: Resume target deployment rollout
 	dclone.Spec.Paused = false
 	dclone.Spec.Replicas = &migratedScale
 	delete(dclone.Spec.Selector.MatchLabels, "tmp")
 	delete(dclone.Spec.Template.Labels, "tmp")
-	m.kubeClientSet.Apps().Deployments(ns).Update(dclone)
+	m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Update(dclone)
 
 	return desiredScale, nil
 }
