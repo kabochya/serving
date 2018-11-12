@@ -151,23 +151,30 @@ func (pks *poolKpaScaler) Scale(ctx context.Context, kpa *kpa.PodAutoscaler, des
 	}
 	logger.Infof("Scaling from %d to %d", currentScale, desiredScale)
 
+	migratedScale := int32(-1)
 	if desiredScale > currentScale {
 		if f, ok := kpa.Labels[serving.FunctionLabelKey]; ok {
-			_, err = pks.migrator.Migrate(kpa, desiredScale, currentScale)
+			migratedScale, err = pks.migrator.Migrate(kpa, desiredScale, currentScale)
 			if err != nil {
 				logger.Errorf("Error migrating pods from %f pool.", f, zap.Error(err))
 			}
 		}
 	}
+	if migratedScale != desiredScale {
 
-	// Scale the target reference.
-	scl.Spec.Replicas = desiredScale
-	_, err = pks.scaleClientSet.Scales(kpa.Namespace).Update(resource, scl)
-	if err != nil {
-		logger.Errorf("Error scaling target reference %v.", resourceName, zap.Error(err))
-		return desiredScale, err
+		// Scale the target reference.
+		scl, err := pks.scaleClientSet.Scales(kpa.Namespace).Get(resource, resourceName)
+		if err != nil {
+			logger.Errorf("Resource %q not found.", resourceName, zap.Error(err))
+			return desiredScale, err
+		}
+		scl.Spec.Replicas = desiredScale
+		_, err = pks.scaleClientSet.Scales(kpa.Namespace).Update(resource, scl)
+		if err != nil {
+			logger.Errorf("Error scaling target reference %v.", resourceName, zap.Error(err))
+			return desiredScale, err
+		}
 	}
 
-	logger.Debug("Successfully scaled.")
 	return desiredScale, nil
 }

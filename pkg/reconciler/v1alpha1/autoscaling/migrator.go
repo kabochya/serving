@@ -36,6 +36,7 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 	rev := kpa.Labels[serving.RevisionLabelKey]
 	deltaScale := desiredScale - currentScale
 	emptyGetOpts := metav1.GetOptions{}
+	zero := int32(0)
 
 	d, err := m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Get(dn, emptyGetOpts)
 	if err != nil {
@@ -46,6 +47,7 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 	// Step 1: pause target deployment rollout
 	dclone := d.DeepCopy()
 	dclone.Spec.Paused = true
+	dclone.Spec.Replicas = &zero
 	dclone.Spec.Template.Labels["tmp"] = "true"
 	dclone.Spec.Selector.MatchLabels["tmp"] = "true"
 	_, err = m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Update(dclone)
@@ -86,7 +88,7 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 		return desiredScale, err
 	}
 
-	migratePods := make([]*v1.Pod, migrateScale)
+	migratePods := make([]*v1.Pod, 0, migrateScale)
 	for i := int32(0); i < migrateScale; i++ {
 		p := podsList.Items[i].DeepCopy()
 		delete(p.Labels, "pool")
@@ -164,5 +166,5 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 	delete(dclone.Spec.Template.Labels, "tmp")
 	m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Update(dclone)
 
-	return desiredScale, nil
+	return migratedScale, nil
 }
