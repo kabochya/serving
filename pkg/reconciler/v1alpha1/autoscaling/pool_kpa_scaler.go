@@ -24,6 +24,7 @@ import (
 	"github.com/knative/pkg/configmap"
 	"github.com/knative/pkg/logging"
 	kpa "github.com/knative/serving/pkg/apis/autoscaling/v1alpha1"
+	"github.com/knative/serving/pkg/apis/serving"
 	"github.com/knative/serving/pkg/apis/serving/v1alpha1"
 	"github.com/knative/serving/pkg/autoscaler"
 	clientset "github.com/knative/serving/pkg/client/clientset/versioned"
@@ -150,14 +151,14 @@ func (pks *poolKpaScaler) Scale(ctx context.Context, kpa *kpa.PodAutoscaler, des
 	}
 	logger.Infof("Scaling from %d to %d", currentScale, desiredScale)
 
-	// if desiredScale > currentScale {
-	// 	if f, ok := kpa.Labels[serving.FunctionLabelKey]; ok {
-	// 		_, err = pks.migrator.Migrate(kpa, desiredScale, currentScale)
-	// 		if err != nil {
-	// 			logger.Errorf("Error migrating pods from %f pool.", f, zap.Error(err))
-	// 		}
-	// 	}
-	// }
+	if desiredScale > currentScale {
+		if f, ok := kpa.Labels[serving.FunctionLabelKey]; ok {
+			_, err = pks.migrator.Migrate(kpa, desiredScale, currentScale)
+			if err != nil {
+				logger.Errorf("Error migrating pods from %f pool.", f, zap.Error(err))
+			}
+		}
+	}
 
 	// Scale the target reference.
 	scl.Spec.Replicas = desiredScale

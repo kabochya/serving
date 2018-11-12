@@ -1,25 +1,20 @@
 package autoscaling
 
 import (
+	"fmt"
+
 	kpa "github.com/knative/serving/pkg/apis/autoscaling/v1alpha1"
 	"github.com/knative/serving/pkg/apis/serving"
 	clientset "github.com/knative/serving/pkg/client/clientset/versioned"
-	servinglisters "github.com/knative/serving/pkg/client/listers/serving/v1alpha1"
 	"go.uber.org/zap"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	appsv1listers "k8s.io/client-go/listers/apps/v1"
-	corev1listers "k8s.io/client-go/listers/core/v1"
 )
 
 type migrator struct {
 	kubeClientSet    kubernetes.Interface
 	servingClientSet clientset.Interface
-	functionLister   servinglisters.FunctionLister
-	deploymentLister appsv1listers.DeploymentLister
-	replicaSetLister appsv1listers.ReplicaSetLister
-	podLister        corev1listers.PodLister
 
 	logger *zap.SugaredLogger
 }
@@ -40,8 +35,9 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 	dn := kpa.Spec.ScaleTargetRef.Name
 	rev := kpa.Labels[serving.RevisionLabelKey]
 	deltaScale := desiredScale - currentScale
+	emptyGetOpts := metav1.GetOptions{}
 
-	d, err := m.deploymentLister.Deployments(ns).Get(dn)
+	d, err := m.kubeClientSet.Apps().Deployments(ns).Get(dn, emptyGetOpts)
 	if err != nil {
 		m.logger.Errorf("Failed to find corresponding deployment %s for KPA: %v", dn, zap.Error(err))
 		return desiredScale, err
@@ -60,33 +56,31 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 
 	// Step 2: pick pods in pool to migrate
 
-	sel, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
-		MatchLabels: map[string]string{
-			serving.FunctionLabelKey: f,
-			"pool":                   "true",
-		},
-	})
+	poolsel := fmt.Sprintf("%s=%s,pool=true", serving.FunctionLabelKey, f)
 	if err != nil {
 		m.logger.Errorf("Failed to parse selector: %v", zap.Error(err))
 		return desiredScale, err
 	}
+	poolListOpts := metav1.ListOptions{
+		LabelSelector: poolsel,
+	}
 
-	poolrss, err := m.replicaSetLister.ReplicaSets(ns).List(sel)
+	poolrsList, err := m.kubeClientSet.Apps().ReplicaSets(ns).List(poolListOpts)
 	if err != nil {
 		m.logger.Errorf("Failed to find corresponding replicaSet for function %s: %v", f, zap.Error(err))
 		return desiredScale, err
-	} else if len(poolrss) != 1 {
-		m.logger.Warnf("%d replicaSet found for function %s.", len(poolrss), f)
+	} else if l := len(poolrsList.Items); l != 1 {
+		m.logger.Warnf("%d replicaSet found for function %s.", l, f)
 	}
 
-	poolrs := poolrss[0]
+	poolrs := poolrsList.Items[0]
 	readyScale := poolrs.Status.ReadyReplicas
 	migrateScale := deltaScale
 	if readyScale < migrateScale {
 		migrateScale = readyScale
 	}
 
-	pods, err := m.podLister.Pods(ns).List(sel)
+	podsList, err := m.kubeClientSet.Core().Pods(ns).List(poolListOpts)
 	if err != nil {
 		m.logger.Errorf("Failed to find pods of function %s: %v", f, zap.Error(err))
 		return desiredScale, err
@@ -94,7 +88,7 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 
 	migratePods := make([]*v1.Pod, migrateScale)
 	for i := int32(0); i < migrateScale; i++ {
-		p := pods[i].DeepCopy()
+		p := podsList.Items[i].DeepCopy()
 		delete(p.Labels, "pool")
 		p, err = m.kubeClientSet.Core().Pods(ns).Update(p)
 		migratePods = append(migratePods, p)
@@ -105,23 +99,19 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 	}
 
 	// Step 3: Change the target rs labels and # of replicas so we can migrate warm pods
-	targetrssel, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
-		MatchLabels: map[string]string{
-			serving.RevisionLabelKey: rev,
-		},
-	})
+	targetrsssel := fmt.Sprintf("%s=%s", serving.RevisionLabelKey, rev)
 	if err != nil {
 		m.logger.Errorf("Failed to parse selector: %v", zap.Error(err))
 		return desiredScale, err
 	}
-	targetrss, err := m.replicaSetLister.ReplicaSets(ns).List(targetrssel)
+	targetrss, err := m.kubeClientSet.Apps().ReplicaSets(ns).List(metav1.ListOptions{LabelSelector: targetrsssel})
 	if err != nil {
 		m.logger.Errorf("Failed to find target replicaSet of revision %s: %v", rev, zap.Error(err))
 		return desiredScale, err
-	} else if len(targetrss) != 1 {
-		m.logger.Warnf("%d replicaSet found for revision %s.", len(targetrss), rev)
+	} else if l := len(targetrss.Items); l != 1 {
+		m.logger.Warnf("%d replicaSet found for revision %s.", l, rev)
 	}
-	targetrs := targetrss[0].DeepCopy()
+	targetrs := targetrss.Items[0].DeepCopy()
 
 	targetsel := &metav1.LabelSelector{
 		MatchExpressions: []metav1.LabelSelectorRequirement{
