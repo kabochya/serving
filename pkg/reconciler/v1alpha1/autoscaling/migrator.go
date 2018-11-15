@@ -1,7 +1,9 @@
 package autoscaling
 
 import (
+	"errors"
 	"fmt"
+	"reflect"
 
 	v1alpha1 "github.com/knative/serving/pkg/apis/autoscaling/v1alpha1"
 	"github.com/knative/serving/pkg/apis/serving"
@@ -29,23 +31,38 @@ func NewMigrator(kubeClientSet kubernetes.Interface, servingClientSet clientset.
 	}
 }
 
+var (
+	// ErrMigrating is an error returned by migrate when the KPA is migrating pods from the pool
+	ErrMigrating = errors.New("KPA Migrating")
+	emptyGetOpts = metav1.GetOptions{}
+)
+
 func (m *migrator) Migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, currentScale int32) (int32, error) {
+	if kpa.Status.GetCondition(v1alpha1.PodAutoscalerConditionMigrate).Status == corev1.ConditionUnknown {
+		return 0, ErrMigrating
+	}
+	go func() {
+		m.migrate(kpa, desiredScale, currentScale)
+		if _, err := m.updateStatus(kpa); err != nil {
+			m.logger.Errorf("Failed updating migration status:", zap.Error(err))
+		}
+	}()
+	return desiredScale, nil
+}
+
+func (m *migrator) migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, currentScale int32) {
+	kpa.Status.InitializeMigrateCondition()
 	ns := kpa.Namespace
 	f := kpa.Labels[serving.FunctionLabelKey]
 	dn := kpa.Spec.ScaleTargetRef.Name
 	rev := kpa.Labels[serving.RevisionLabelKey]
 	deltaScale := desiredScale - currentScale
-	emptyGetOpts := metav1.GetOptions{}
 	zero := int32(0)
-	if kpa.Status.GetCondition(v1alpha1.PodAutoscalerConditionMigrate).Status == corev1.ConditionUnknown {
-		return desiredScale, nil
-	}
-	kpa.Status.InitializeMigrateCondition()
 
 	d, err := m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Get(dn, emptyGetOpts)
 	if err != nil {
 		m.logger.Errorf("Failed to find corresponding deployment %s for KPA: %v", dn, zap.Error(err))
-		return 0, err
+		return
 	}
 
 	// Step 1: pause target deployment rollout
@@ -57,7 +74,7 @@ func (m *migrator) Migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, curr
 	_, err = m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Update(dclone)
 	if err != nil {
 		m.logger.Errorf("Failed to pause deployment %s: %v", dn, zap.Error(err))
-		return desiredScale, err
+		return
 	}
 
 	// Step 2: pick pods in pool to migrate
@@ -65,7 +82,7 @@ func (m *migrator) Migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, curr
 	poolsel := fmt.Sprintf("%s=%s,pool=true", serving.FunctionLabelKey, f)
 	if err != nil {
 		m.logger.Errorf("Failed to parse selector: %v", zap.Error(err))
-		return desiredScale, err
+		return
 	}
 	poolListOpts := metav1.ListOptions{
 		LabelSelector: poolsel,
@@ -74,7 +91,7 @@ func (m *migrator) Migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, curr
 	poolrsList, err := m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).List(poolListOpts)
 	if err != nil {
 		m.logger.Errorf("Failed to find corresponding replicaSet for function %s: %v", f, zap.Error(err))
-		return desiredScale, err
+		return
 	} else if l := len(poolrsList.Items); l != 1 {
 		m.logger.Warnf("%d replicaSet found for function %s.", l, f)
 	}
@@ -89,7 +106,7 @@ func (m *migrator) Migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, curr
 	podsList, err := m.kubeClientSet.Core().Pods(ns).List(poolListOpts)
 	if err != nil {
 		m.logger.Errorf("Failed to find pods of function %s: %v", f, zap.Error(err))
-		return desiredScale, err
+		return
 	}
 
 	migratePods := make([]*corev1.Pod, 0, migrateScale)
@@ -107,7 +124,7 @@ MigratePod:
 		migratePods = append(migratePods, p)
 		if err != nil {
 			m.logger.Errorf("Failed to update warm pod in pool %s: %v", f, zap.Error(err))
-			return desiredScale, nil
+			return
 		}
 	}
 
@@ -115,12 +132,12 @@ MigratePod:
 	targetrsssel := fmt.Sprintf("%s=%s", serving.RevisionLabelKey, rev)
 	if err != nil {
 		m.logger.Errorf("Failed to parse selector: %v", zap.Error(err))
-		return desiredScale, err
+		return
 	}
 	targetrss, err := m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).List(metav1.ListOptions{LabelSelector: targetrsssel})
 	if err != nil {
 		m.logger.Errorf("Failed to find target replicaSet of revision %s: %v", rev, zap.Error(err))
-		return desiredScale, err
+		return
 	} else if l := len(targetrss.Items); l != 1 {
 		m.logger.Warnf("%d replicaSet found for revision %s.", l, rev)
 	}
@@ -151,7 +168,7 @@ MigratePod:
 	targetrs, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Update(targetrs)
 	if err != nil {
 		m.logger.Errorf("Failed to update target rs %s: %v", targetrs.Name, zap.Error(err))
-		return desiredScale, nil
+		return
 	}
 	// Step 4: Add labels to migrated warm pods so we can restore the target rs to original labels
 	for _, p := range migratePods {
@@ -163,7 +180,7 @@ MigratePod:
 		p, err = m.kubeClientSet.Core().Pods(ns).Update(p)
 		if err != nil {
 			m.logger.Errorf("Failed to relabel pod %s: %v", p.Name, zap.Error(err))
-			return desiredScale, nil
+			return
 		}
 		// TODO: change pod stat vars
 	}
@@ -176,12 +193,29 @@ MigratePod:
 
 	// Step 6: Resume target deployment rollout
 	dclone.Spec.Paused = false
-	dclone.Spec.Replicas = &migratedScale
+	dclone.Spec.Replicas = &desiredScale
 	delete(dclone.Spec.Selector.MatchLabels, "tmp")
 	delete(dclone.Spec.Template.Labels, "tmp")
 	m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Update(dclone)
 
 	kpa.Status.MarkMigrated()
 
-	return migratedScale, nil
+	return
+}
+func (m *migrator) updateStatus(desired *v1alpha1.PodAutoscaler) (*v1alpha1.PodAutoscaler, error) {
+	kpa, err := m.servingClientSet.AutoscalingV1alpha1().PodAutoscalers(desired.Namespace).Get(desired.Name, emptyGetOpts)
+	if err != nil {
+		return nil, err
+	}
+	// Check if there is anything to update.
+	if !reflect.DeepEqual(kpa.Status, desired.Status) {
+		// Don't modify the informers copy
+		existing := kpa.DeepCopy()
+		existing.Status = desired.Status
+
+		// TODO: for CRD there's no updatestatus, so use normal update
+		return m.servingClientSet.AutoscalingV1alpha1().PodAutoscalers(kpa.Namespace).Update(existing)
+		//	return prClient.UpdateStatus(newKPA)
+	}
+	return kpa, nil
 }
