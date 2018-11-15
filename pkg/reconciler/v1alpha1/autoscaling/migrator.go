@@ -3,11 +3,11 @@ package autoscaling
 import (
 	"fmt"
 
-	kpa "github.com/knative/serving/pkg/apis/autoscaling/v1alpha1"
+	v1alpha1 "github.com/knative/serving/pkg/apis/autoscaling/v1alpha1"
 	"github.com/knative/serving/pkg/apis/serving"
 	clientset "github.com/knative/serving/pkg/client/clientset/versioned"
 	"go.uber.org/zap"
-	"k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -29,7 +29,7 @@ func NewMigrator(kubeClientSet kubernetes.Interface, servingClientSet clientset.
 	}
 }
 
-func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentScale int32) (int32, error) {
+func (m *migrator) Migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, currentScale int32) (int32, error) {
 	ns := kpa.Namespace
 	f := kpa.Labels[serving.FunctionLabelKey]
 	dn := kpa.Spec.ScaleTargetRef.Name
@@ -37,11 +37,15 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 	deltaScale := desiredScale - currentScale
 	emptyGetOpts := metav1.GetOptions{}
 	zero := int32(0)
+	if kpa.Status.GetCondition(v1alpha1.PodAutoscalerConditionMigrate).Status == corev1.ConditionUnknown {
+		return desiredScale, nil
+	}
+	kpa.Status.InitializeMigrateCondition()
 
 	d, err := m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Get(dn, emptyGetOpts)
 	if err != nil {
 		m.logger.Errorf("Failed to find corresponding deployment %s for KPA: %v", dn, zap.Error(err))
-		return desiredScale, err
+		return 0, err
 	}
 
 	// Step 1: pause target deployment rollout
@@ -88,9 +92,16 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 		return desiredScale, err
 	}
 
-	migratePods := make([]*v1.Pod, 0, migrateScale)
-	for i := int32(0); i < migrateScale; i++ {
+	migratePods := make([]*corev1.Pod, 0, migrateScale)
+MigratePod:
+	for i := int32(0); int32(len(migratePods)) < migrateScale; i++ {
 		p := podsList.Items[i].DeepCopy()
+
+		for _, c := range p.Status.Conditions {
+			if c.Status != "True" {
+				continue MigratePod
+			}
+		}
 		delete(p.Labels, "pool")
 		p, err = m.kubeClientSet.Core().Pods(ns).Update(p)
 		migratePods = append(migratePods, p)
@@ -145,6 +156,10 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 	// Step 4: Add labels to migrated warm pods so we can restore the target rs to original labels
 	for _, p := range migratePods {
 		p.Labels = targetrs.Labels
+		newOwner := p.ObjectMeta.OwnerReferences[0]
+		newOwner.Name = targetrs.Name
+		newOwner.UID = targetrs.UID
+		p.ObjectMeta.OwnerReferences[0] = newOwner
 		p, err = m.kubeClientSet.Core().Pods(ns).Update(p)
 		if err != nil {
 			m.logger.Errorf("Failed to relabel pod %s: %v", p.Name, zap.Error(err))
@@ -165,6 +180,8 @@ func (m *migrator) Migrate(kpa *kpa.PodAutoscaler, desiredScale int32, currentSc
 	delete(dclone.Spec.Selector.MatchLabels, "tmp")
 	delete(dclone.Spec.Template.Labels, "tmp")
 	m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Update(dclone)
+
+	kpa.Status.MarkMigrated()
 
 	return migratedScale, nil
 }
