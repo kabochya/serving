@@ -3,11 +3,14 @@ package autoscaling
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"reflect"
 
 	v1alpha1 "github.com/knative/serving/pkg/apis/autoscaling/v1alpha1"
 	"github.com/knative/serving/pkg/apis/serving"
 	clientset "github.com/knative/serving/pkg/client/clientset/versioned"
+	"github.com/knative/serving/pkg/queue"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -192,6 +195,9 @@ MigratePod:
 		return
 	}
 	// Step 4: Add labels to migrated warm pods so we can restore the target rs to original labels
+
+	initStatFormVals := url.Values{}
+	initStatFormVals.Set("revision", rev)
 	for _, p := range migratePods {
 		p.Labels = targetrs.Labels
 		newOwner := p.ObjectMeta.OwnerReferences[0]
@@ -203,7 +209,8 @@ MigratePod:
 			m.logger.Errorf("Failed to relabel pod %s: %v", p.Name, zap.Error(err))
 			return
 		}
-		// TODO: change pod stat vars
+		podMigrateURL := fmt.Sprintf("%s:%d/%s", p.Status.PodIP, queue.RequestQueueAdminPort, queue.RequestQueuePoolMigratePath)
+		go http.PostForm(podMigrateURL, initStatFormVals)
 	}
 	// Step 5: Change the target rs labels back to original
 	targetrs.Spec.Selector = &metav1.LabelSelector{
