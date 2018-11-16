@@ -21,6 +21,7 @@ import (
 
 	"github.com/knative/pkg/kmeta"
 	"github.com/knative/pkg/logging"
+	"github.com/knative/serving/pkg/apis/serving"
 	"github.com/knative/serving/pkg/apis/serving/v1alpha1"
 	"github.com/knative/serving/pkg/autoscaler"
 	"github.com/knative/serving/pkg/queue"
@@ -158,7 +159,10 @@ func MakeDeployment(rev *v1alpha1.Revision,
 		}
 	}
 
-	one := int32(1)
+	replicas := int32(1)
+	if _, ok := rev.Labels[serving.FunctionLabelKey]; ok {
+		replicas = int32(0)
+	}
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            names.Deployment(rev),
@@ -168,7 +172,7 @@ func MakeDeployment(rev *v1alpha1.Revision,
 			OwnerReferences: []metav1.OwnerReference{*kmeta.NewControllerRef(rev)},
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas:                &one,
+			Replicas:                &replicas,
 			Selector:                makeSelector(rev),
 			ProgressDeadlineSeconds: &ProgressDeadlineSeconds,
 			Template: corev1.PodTemplateSpec{

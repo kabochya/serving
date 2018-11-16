@@ -38,12 +38,20 @@ var (
 )
 
 func (m *migrator) Migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, currentScale int32) (int32, error) {
-	if kpa.Status.GetCondition(v1alpha1.PodAutoscalerConditionMigrate).Status == corev1.ConditionUnknown {
-		return 0, ErrMigrating
+	kpaclone, err := m.servingClientSet.Autoscaling().PodAutoscalers(kpa.Namespace).Get(kpa.Name, emptyGetOpts)
+	if err != nil {
+		m.logger.Errorf("Could not get kpa %s:", kpa.Name, zap.Error(err))
+		return desiredScale, err
 	}
+	migrateStatus := kpaclone.Status.GetCondition(v1alpha1.PodAutoscalerConditionMigrate)
+	if migrateStatus != nil && migrateStatus.Status == corev1.ConditionUnknown {
+		return desiredScale, ErrMigrating
+	}
+	kpaclone.Status.InitializeMigrateCondition()
 	go func() {
-		m.migrate(kpa, desiredScale, currentScale)
-		if _, err := m.updateStatus(kpa); err != nil {
+		m.logger.Info("KPA migrating")
+		m.migrate(kpaclone, desiredScale, currentScale)
+		if _, err := m.updateStatus(kpaclone); err != nil {
 			m.logger.Errorf("Failed updating migration status:", zap.Error(err))
 		}
 	}()
@@ -51,7 +59,6 @@ func (m *migrator) Migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, curr
 }
 
 func (m *migrator) migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, currentScale int32) {
-	kpa.Status.InitializeMigrateCondition()
 	ns := kpa.Namespace
 	f := kpa.Labels[serving.FunctionLabelKey]
 	dn := kpa.Spec.ScaleTargetRef.Name
@@ -64,9 +71,23 @@ func (m *migrator) migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, curr
 		m.logger.Errorf("Failed to find corresponding deployment %s for KPA: %v", dn, zap.Error(err))
 		return
 	}
-
-	// Step 1: pause target deployment rollout
 	dclone := d.DeepCopy()
+
+	if deltaScale == 0 {
+		return
+	} else if deltaScale < 0 {
+
+		dclone.Spec.Replicas = &desiredScale
+		_, err = m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Update(dclone)
+		if err != nil {
+			m.logger.Errorf("Failed to update deployment %s: %v", dclone.Name, zap.Error(err))
+			return
+		}
+
+		kpa.Status.MarkMigrated()
+		return
+	}
+	// Step 1: pause target deployment rollout
 	dclone.Spec.Paused = true
 	dclone.Spec.Replicas = &zero
 	dclone.Spec.Template.Labels["tmp"] = "true"
@@ -196,7 +217,11 @@ MigratePod:
 	dclone.Spec.Replicas = &desiredScale
 	delete(dclone.Spec.Selector.MatchLabels, "tmp")
 	delete(dclone.Spec.Template.Labels, "tmp")
-	m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Update(dclone)
+	_, err = m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Update(dclone)
+	if err != nil {
+		m.logger.Errorf("Failed to update deployment %s: %v", dclone.Name, zap.Error(err))
+		return
+	}
 
 	kpa.Status.MarkMigrated()
 
@@ -212,6 +237,8 @@ func (m *migrator) updateStatus(desired *v1alpha1.PodAutoscaler) (*v1alpha1.PodA
 		// Don't modify the informers copy
 		existing := kpa.DeepCopy()
 		existing.Status = desired.Status
+
+		m.logger.Infof("migrator update kpa status: %+v", existing.Status)
 
 		// TODO: for CRD there's no updatestatus, so use normal update
 		return m.servingClientSet.AutoscalingV1alpha1().PodAutoscalers(kpa.Namespace).Update(existing)

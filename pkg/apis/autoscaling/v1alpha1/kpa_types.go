@@ -97,11 +97,11 @@ const (
 	// PodAutoscalerConditionActive is set when the PodAutoscaler's ScaleTargetRef is receiving traffic.
 	PodAutoscalerConditionActive duckv1alpha1.ConditionType = "Active"
 
-	// PodAutoscalerConditionMigrating is set when the PodAutoscaler is migrating pods from a pool
+	// PodAutoscalerConditionMigrate is set when the PodAutoscaler is migrating pods from a pool
 	PodAutoscalerConditionMigrate duckv1alpha1.ConditionType = "Migrate"
 )
 
-var podCondSet = duckv1alpha1.NewLivingConditionSet(PodAutoscalerConditionActive, PodAutoscalerConditionMigrate)
+var podCondSet = duckv1alpha1.NewLivingConditionSet(PodAutoscalerConditionActive)
 
 // PodAutoscalerStatus communicates the observed state of the PodAutoscaler (from the controller).
 type PodAutoscalerStatus struct {
