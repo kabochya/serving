@@ -96,9 +96,6 @@ const (
 	PodAutoscalerConditionReady = duckv1alpha1.ConditionReady
 	// PodAutoscalerConditionActive is set when the PodAutoscaler's ScaleTargetRef is receiving traffic.
 	PodAutoscalerConditionActive duckv1alpha1.ConditionType = "Active"
-
-	// PodAutoscalerConditionMigrate is set when the PodAutoscaler is migrating pods from a pool
-	PodAutoscalerConditionMigrate duckv1alpha1.ConditionType = "Migrate"
 )
 
 var podCondSet = duckv1alpha1.NewLivingConditionSet(PodAutoscalerConditionActive)
@@ -154,10 +151,6 @@ func (rs *PodAutoscalerStatus) InitializeConditions() {
 	podCondSet.Manage(rs).InitializeConditions()
 }
 
-func (rs *PodAutoscalerStatus) InitializeMigrateCondition() {
-	podCondSet.Manage(rs).InitializeCondition(PodAutoscalerConditionMigrate)
-}
-
 func (rs *PodAutoscalerStatus) MarkActive() {
 	podCondSet.Manage(rs).MarkTrue(PodAutoscalerConditionActive)
 }
@@ -168,17 +161,6 @@ func (rs *PodAutoscalerStatus) MarkActivating(reason, message string) {
 
 func (rs *PodAutoscalerStatus) MarkInactive(reason, message string) {
 	podCondSet.Manage(rs).MarkFalse(PodAutoscalerConditionActive, reason, message)
-}
-
-func (rs *PodAutoscalerStatus) MarkMigrated() {
-	podCondSet.Manage(rs).MarkTrue(PodAutoscalerConditionMigrate)
-}
-func (rs *PodAutoscalerStatus) MarkMigrating(reason, message string) {
-	podCondSet.Manage(rs).MarkUnknown(PodAutoscalerConditionMigrate, reason, message)
-}
-
-func (rs *PodAutoscalerStatus) MigrateFail(reason, message string) {
-	podCondSet.Manage(rs).MarkFalse(PodAutoscalerConditionMigrate, reason, message)
 }
 
 // CanScaleToZero checks whether the pod autoscaler has been in an inactive state

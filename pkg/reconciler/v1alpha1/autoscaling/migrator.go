@@ -1,7 +1,6 @@
 package autoscaling
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -35,29 +34,16 @@ func NewMigrator(kubeClientSet kubernetes.Interface, servingClientSet clientset.
 }
 
 var (
-	// ErrMigrating is an error returned by migrate when the KPA is migrating pods from the pool
-	ErrMigrating = errors.New("KPA Migrating")
 	emptyGetOpts = metav1.GetOptions{}
 )
 
 func (m *migrator) Migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, currentScale int32) (int32, error) {
-	kpaclone, err := m.servingClientSet.Autoscaling().PodAutoscalers(kpa.Namespace).Get(kpa.Name, emptyGetOpts)
-	if err != nil {
-		m.logger.Errorf("Could not get kpa %s:", kpa.Name, zap.Error(err))
-		return desiredScale, err
-	}
-	migrateStatus := kpaclone.Status.GetCondition(v1alpha1.PodAutoscalerConditionMigrate)
-	if migrateStatus != nil && migrateStatus.Status == corev1.ConditionUnknown {
-		return desiredScale, ErrMigrating
-	}
-	kpaclone.Status.InitializeMigrateCondition()
-	go func() {
-		if err := m.migrate(kpaclone, desiredScale, currentScale); err != nil {
-			if _, err := m.updateStatus(kpaclone); err != nil {
-				m.logger.Errorf("Failed updating migration status:", zap.Error(err))
-			}
+	if err := m.migrate(kpa, desiredScale, currentScale); err != nil {
+		if _, err = m.updateStatus(kpa); err != nil {
+			m.logger.Errorf("Failed updating migration status:", zap.Error(err))
 		}
-	}()
+		return 0, err
+	}
 	return desiredScale, nil
 }
 
@@ -86,8 +72,6 @@ func (m *migrator) migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, curr
 			m.logger.Errorf("Failed to update deployment %s: %v", dclone.Name, zap.Error(err))
 			return err
 		}
-
-		kpa.Status.MarkMigrated()
 		return nil
 	}
 	m.logger.Info("KPA migrating")
@@ -221,6 +205,13 @@ MigratePod:
 	_, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Update(targetrs)
 
 	// Step 6: Resume target deployment rollout
+	d, err = m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Get(dn, emptyGetOpts)
+	if err != nil {
+		m.logger.Errorf("Failed to find corresponding deployment %s for KPA: %v", dn, zap.Error(err))
+		return err
+	}
+	dclone = d.DeepCopy()
+
 	dclone.Spec.Paused = false
 	dclone.Spec.Replicas = &desiredScale
 	delete(dclone.Spec.Selector.MatchLabels, "tmp")
@@ -230,8 +221,6 @@ MigratePod:
 		m.logger.Errorf("Failed to update deployment %s: %v", dclone.Name, zap.Error(err))
 		return err
 	}
-
-	kpa.Status.MarkMigrated()
 
 	return nil
 }

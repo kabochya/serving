@@ -187,9 +187,7 @@ func (c *Reconciler) reconcile(ctx context.Context, key string, kpa *kpa.PodAuto
 	// Get the appropriate current scale from the metric, and right size
 	// the scaleTargetRef based on it.
 	appliedScale, err := c.kpaScaler.Scale(ctx, kpa, metric.DesiredScale)
-	if err == ErrMigrating {
-		//
-	} else if err != nil {
+	if err != nil {
 		logger.Errorf("Error scaling target: %v", err)
 		return err
 	}

@@ -50,7 +50,7 @@ import (
 )
 
 const (
-	controllerThreads = 2
+	controllerThreads = 1
 	statsServerAddr   = ":8080"
 	statsBufferLen    = 1000
 	logLevelKey       = "autoscaler"
