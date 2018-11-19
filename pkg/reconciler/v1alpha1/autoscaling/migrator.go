@@ -1,10 +1,12 @@
 package autoscaling
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
+	"time"
 
 	v1alpha1 "github.com/knative/serving/pkg/apis/autoscaling/v1alpha1"
 	"github.com/knative/serving/pkg/apis/serving"
@@ -62,6 +64,10 @@ func (m *migrator) migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, curr
 	}
 	dclone := d.DeepCopy()
 
+	if *dclone.Spec.Replicas != currentScale {
+		return errors.New("Mismatch in scale")
+	}
+
 	if deltaScale == 0 {
 		return nil
 	} else if deltaScale < 0 {
@@ -74,6 +80,7 @@ func (m *migrator) migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, curr
 		}
 		return nil
 	}
+	t := time.Now()
 	m.logger.Info("KPA migrating")
 	// Step 1: pause target deployment rollout
 	dclone.Spec.Paused = true
@@ -174,7 +181,7 @@ MigratePod:
 		serving.FunctionLabelKey: f,
 	}
 
-	targetrs, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Update(targetrs)
+	_, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Update(targetrs)
 	if err != nil {
 		m.logger.Errorf("Failed to update target rs %s: %v", targetrs.Name, zap.Error(err))
 		return err
@@ -204,11 +211,22 @@ MigratePod:
 		}
 	}
 	// Step 5: Change the target rs labels back to original
-	targetrs.Spec.Selector = &metav1.LabelSelector{
-		MatchLabels: targetrs.Labels,
+	restorers, err := m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Get(targetrs.Name, emptyGetOpts)
+	if err != nil {
+		m.logger.Errorf("Failed to find corresponding target rs %s: %v", restorers.Name, zap.Error(err))
+		return err
 	}
-	targetrs.Spec.Template.Labels = targetrs.Labels
-	_, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Update(targetrs)
+	rsclone := restorers.DeepCopy()
+	rsclone.Spec.Selector = &metav1.LabelSelector{
+		MatchLabels: rsclone.Labels,
+	}
+	rsclone.Spec.Template.Labels = rsclone.Labels
+	rsclone.Spec.Replicas = &desiredScale
+	_, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Update(rsclone)
+	if err != nil {
+		m.logger.Errorf("Failed to restore target rs %s", rsclone.Name, zap.Error(err))
+		return err
+	}
 
 	// Step 6: Resume target deployment rollout
 	d, err = m.kubeClientSet.ExtensionsV1beta1().Deployments(ns).Get(dn, emptyGetOpts)
@@ -227,6 +245,7 @@ MigratePod:
 		m.logger.Errorf("Failed to update deployment %s: %v", dclone.Name, zap.Error(err))
 		return err
 	}
+	m.logger.Infof("Migration time = %d", time.Since(t)/time.Microsecond)
 
 	return nil
 }
