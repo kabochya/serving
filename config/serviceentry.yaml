@@ -1,0 +1,14 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: ServiceEntry
+metadata:
+  name: test-se
+  namespace: istio-system
+spec:
+  hosts:
+  - "*.default.pod.cluster.local"
+  location: MESH_EXTERNAL
+  ports:
+  - number: 8022
+    name: queueadm-port
+    protocol: HTTP
+  resolution: NONE

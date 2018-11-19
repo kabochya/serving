@@ -3,8 +3,8 @@ package autoscaling
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"reflect"
+	"strings"
 
 	v1alpha1 "github.com/knative/serving/pkg/apis/autoscaling/v1alpha1"
 	"github.com/knative/serving/pkg/apis/serving"
@@ -180,9 +180,8 @@ MigratePod:
 		return err
 	}
 	// Step 4: Add labels to migrated warm pods so we can restore the target rs to original labels
+	m.logger.Infof("number of migrated warm pods = %d", len(migratePods))
 
-	initStatFormVals := url.Values{}
-	initStatFormVals.Set("revision", rev)
 	for _, p := range migratePods {
 		p.Labels = targetrs.Labels
 		newOwner := p.ObjectMeta.OwnerReferences[0]
@@ -194,8 +193,15 @@ MigratePod:
 			m.logger.Errorf("Failed to relabel pod %s: %v", p.Name, zap.Error(err))
 			return err
 		}
-		podMigrateURL := fmt.Sprintf("%s:%d/%s", p.Status.PodIP, queue.RequestQueueAdminPort, queue.RequestQueuePoolMigratePath)
-		go http.PostForm(podMigrateURL, initStatFormVals)
+		ip2str := strings.Replace(p.Status.PodIP, ".", "-", -1)
+		podMigrateURL := fmt.Sprintf("http://%s.%s.pod.cluster.local:%d/%s?revision=%s", ip2str, p.Namespace, queue.RequestQueueAdminPort, queue.RequestQueuePoolMigratePath, rev)
+		m.logger.Infof("pod migrate url: %s", podMigrateURL)
+		resp, err := http.Get(podMigrateURL)
+		if err != nil {
+			m.logger.Errorf("init stat for pod %s:", p.Name, zap.Error(err))
+		} else {
+			defer resp.Body.Close()
+		}
 	}
 	// Step 5: Change the target rs labels back to original
 	targetrs.Spec.Selector = &metav1.LabelSelector{

@@ -303,11 +303,13 @@ func main() {
 }
 
 func poolMigrateHandler(w http.ResponseWriter, r *http.Request) {
+	logger.Infof("called poolmigrate, request: %+v", r)
+
 	servingRevision = r.FormValue("revision")
 	servingRevisionKey = autoscaler.NewKpaKey(servingNamespace, servingRevision)
-
 	logger = baseLogger.With(
 		zap.String(logkey.Key, servingRevisionKey),
 		zap.String(logkey.Pod, podName))
-	return
+	w.WriteHeader(http.StatusOK)
+	io.WriteString(w, "ok")
 }
