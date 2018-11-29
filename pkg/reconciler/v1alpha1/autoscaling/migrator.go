@@ -110,6 +110,7 @@ func (m *migrator) migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, curr
 	}
 
 	migratedScale := int32(0)
+	migratedPodNames := make(map[string]bool)
 MigratePod:
 	for _, i := range podsList.Items {
 		p := i.DeepCopy()
@@ -120,8 +121,9 @@ MigratePod:
 			}
 		}
 		delete(p.Labels, "pool")
-		_, err = m.kubeClientSet.Core().Pods(ns).Update(p)
+		p, err = m.kubeClientSet.Core().Pods(ns).Update(p)
 		migratedScale++
+		migratedPodNames[p.Name] = true
 		if err != nil {
 			m.logger.Errorf("Failed to update warm pod in pool %s: %v", f, zap.Error(err))
 			return err
@@ -196,14 +198,16 @@ MigratePod:
 			m.logger.Errorf("Failed to relabel pod %s: %v", p.Name, zap.Error(err))
 			return err
 		}
-		ip2str := strings.Replace(p.Status.PodIP, ".", "-", -1)
-		podMigrateURL := fmt.Sprintf("http://%s.%s.pod.cluster.local:%d/%s?revision=%s", ip2str, p.Namespace, queue.RequestQueueAdminPort, queue.RequestQueuePoolMigratePath, rev)
-		m.logger.Infof("pod migrate url: %s", podMigrateURL)
-		resp, err := http.Get(podMigrateURL)
-		if err != nil {
-			m.logger.Errorf("init stat for pod %s:", p.Name, zap.Error(err))
-		} else {
-			defer resp.Body.Close()
+		if _, ok := migratedPodNames[p.Name]; ok {
+			ip2str := strings.Replace(p.Status.PodIP, ".", "-", -1)
+			podMigrateURL := fmt.Sprintf("http://%s.%s.pod.cluster.local:%d/%s?revision=%s", ip2str, p.Namespace, queue.RequestQueueAdminPort, queue.RequestQueuePoolMigratePath, rev)
+			m.logger.Infof("pod migrate url: %s", podMigrateURL)
+			resp, err := http.Get(podMigrateURL)
+			if err != nil {
+				m.logger.Errorf("init stat for pod %s:", p.Name, zap.Error(err))
+			} else {
+				defer resp.Body.Close()
+			}
 		}
 	}
 	// Step 5: Change the target rs labels back to original
