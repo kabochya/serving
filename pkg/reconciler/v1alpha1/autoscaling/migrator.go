@@ -13,7 +13,6 @@ import (
 	clientset "github.com/knative/serving/pkg/client/clientset/versioned"
 	"github.com/knative/serving/pkg/queue"
 	"go.uber.org/zap"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -104,31 +103,16 @@ func (m *migrator) migrate(kpa *v1alpha1.PodAutoscaler, desiredScale int32, curr
 		LabelSelector: poolsel,
 	}
 
-	poolrsList, err := m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).List(poolListOpts)
-	if err != nil {
-		m.logger.Errorf("Failed to find corresponding replicaSet for function %s: %v", f, zap.Error(err))
-		return err
-	} else if l := len(poolrsList.Items); l != 1 {
-		m.logger.Warnf("%d replicaSet found for function %s.", l, f)
-	}
-
-	poolrs := poolrsList.Items[0]
-	readyScale := poolrs.Status.ReadyReplicas
-	migrateScale := deltaScale
-	if readyScale < migrateScale {
-		migrateScale = readyScale
-	}
-
 	podsList, err := m.kubeClientSet.Core().Pods(ns).List(poolListOpts)
 	if err != nil {
 		m.logger.Errorf("Failed to find pods of function %s: %v", f, zap.Error(err))
 		return err
 	}
 
-	migratePods := make([]*corev1.Pod, 0, migrateScale)
+	migratedScale := int32(0)
 MigratePod:
-	for i := int32(0); int32(len(migratePods)) < migrateScale; i++ {
-		p := podsList.Items[i].DeepCopy()
+	for _, i := range podsList.Items {
+		p := i.DeepCopy()
 
 		for _, c := range p.Status.Conditions {
 			if c.Status != "True" {
@@ -136,11 +120,14 @@ MigratePod:
 			}
 		}
 		delete(p.Labels, "pool")
-		p, err = m.kubeClientSet.Core().Pods(ns).Update(p)
-		migratePods = append(migratePods, p)
+		_, err = m.kubeClientSet.Core().Pods(ns).Update(p)
+		migratedScale++
 		if err != nil {
 			m.logger.Errorf("Failed to update warm pod in pool %s: %v", f, zap.Error(err))
 			return err
+		}
+		if migratedScale == deltaScale {
+			break
 		}
 	}
 
@@ -173,7 +160,6 @@ MigratePod:
 			},
 		},
 	}
-	migratedScale := currentScale + deltaScale
 
 	targetrs.Spec.Replicas = &migratedScale
 	targetrs.Spec.Selector = targetsel
@@ -187,15 +173,25 @@ MigratePod:
 		return err
 	}
 	// Step 4: Add labels to migrated warm pods so we can restore the target rs to original labels
-	m.logger.Infof("number of migrated warm pods = %d", len(migratePods))
+	migratePodOpt := metav1.ListOptions{
+		LabelSelector: metav1.FormatLabelSelector(targetsel),
+	}
+	migratePods, err := m.kubeClientSet.CoreV1().Pods(ns).List(migratePodOpt)
+	if err != nil {
+		m.logger.Errorf("Failed to list migrated pods", zap.Error(err))
+		return err
+	}
 
-	for _, p := range migratePods {
-		p.Labels = targetrs.Labels
+	m.logger.Infof("number of migrated warm pods = %d", len(migratePods.Items))
+
+	for _, p := range migratePods.Items {
+		pclone := p.DeepCopy()
+		pclone.Labels = targetrs.Labels
 		newOwner := p.ObjectMeta.OwnerReferences[0]
 		newOwner.Name = targetrs.Name
 		newOwner.UID = targetrs.UID
-		p.ObjectMeta.OwnerReferences[0] = newOwner
-		p, err = m.kubeClientSet.Core().Pods(ns).Update(p)
+		pclone.ObjectMeta.OwnerReferences[0] = newOwner
+		_, err = m.kubeClientSet.Core().Pods(ns).Update(pclone)
 		if err != nil {
 			m.logger.Errorf("Failed to relabel pod %s: %v", p.Name, zap.Error(err))
 			return err
