@@ -8,12 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/knative/pkg/apis/duck"
 	v1alpha1 "github.com/knative/serving/pkg/apis/autoscaling/v1alpha1"
 	"github.com/knative/serving/pkg/apis/serving"
 	clientset "github.com/knative/serving/pkg/client/clientset/versioned"
 	"github.com/knative/serving/pkg/queue"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -121,7 +123,12 @@ MigratePod:
 			}
 		}
 		delete(p.Labels, "pool")
-		p, err = m.kubeClientSet.Core().Pods(ns).Update(p)
+		patchJSON, err := createPatch(i, p)
+		if err != nil {
+			m.logger.Errorf("Failed to create patch: %s", p.Name, zap.Error(err))
+			return err
+		}
+		p, err = m.kubeClientSet.Core().Pods(ns).Patch(p.Name, types.JSONPatchType, patchJSON)
 		migratedScale++
 		migratedPodNames[p.Name] = true
 		if err != nil {
@@ -132,6 +139,7 @@ MigratePod:
 			break
 		}
 	}
+	m.logger.Infof("# migrated pods: %d", migratedScale)
 
 	// Step 3: Change the target rs labels and # of replicas so we can migrate warm pods
 	targetrsssel := fmt.Sprintf("%s=%s", serving.RevisionLabelKey, rev)
@@ -162,22 +170,30 @@ MigratePod:
 			},
 		},
 	}
+	migratedScale += currentScale
 
 	targetrs.Spec.Replicas = &migratedScale
 	targetrs.Spec.Selector = targetsel
 	targetrs.Spec.Template.Labels = map[string]string{
 		serving.FunctionLabelKey: f,
 	}
-
-	_, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Update(targetrs)
+	patchJSON, err := createPatch(targetrss.Items[0], targetrs)
 	if err != nil {
-		m.logger.Errorf("Failed to update target rs %s: %v", targetrs.Name, zap.Error(err))
+		m.logger.Errorf("Failed to create patch: %+v", targetrs)
+		return err
+	}
+
+	m.logger.Infof("patch: %s", patchJSON)
+	_, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Patch(targetrs.Name, types.JSONPatchType, patchJSON)
+	if err != nil {
+		m.logger.Errorf("Failed to patch target rs %s: %v", targetrs.Name, zap.Error(err))
 		return err
 	}
 	// Step 4: Add labels to migrated warm pods so we can restore the target rs to original labels
 	migratePodOpt := metav1.ListOptions{
-		LabelSelector: metav1.FormatLabelSelector(targetsel),
+		LabelSelector: fmt.Sprintf("%s=%s,pool!=true", serving.FunctionLabelKey, f),
 	}
+	m.logger.Infof("migratePodOpt selector: %s", migratePodOpt.LabelSelector)
 	migratePods, err := m.kubeClientSet.CoreV1().Pods(ns).List(migratePodOpt)
 	if err != nil {
 		m.logger.Errorf("Failed to list migrated pods", zap.Error(err))
@@ -193,7 +209,12 @@ MigratePod:
 		newOwner.Name = targetrs.Name
 		newOwner.UID = targetrs.UID
 		pclone.ObjectMeta.OwnerReferences[0] = newOwner
-		_, err = m.kubeClientSet.Core().Pods(ns).Update(pclone)
+		patchJSON, err = createPatch(p, pclone)
+		if err != nil {
+			m.logger.Errorf("Failed to create patch: %s", p.Name, zap.Error(err))
+			return err
+		}
+		_, err = m.kubeClientSet.Core().Pods(ns).Patch(pclone.Name, types.JSONPatchType, patchJSON)
 		if err != nil {
 			m.logger.Errorf("Failed to relabel pod %s: %v", p.Name, zap.Error(err))
 			return err
@@ -216,15 +237,23 @@ MigratePod:
 		m.logger.Errorf("Failed to find corresponding target rs %s: %v", restorers.Name, zap.Error(err))
 		return err
 	}
+
 	rsclone := restorers.DeepCopy()
 	rsclone.Spec.Selector = &metav1.LabelSelector{
-		MatchLabels: rsclone.Labels,
+		MatchLabels: restorers.Labels,
 	}
-	rsclone.Spec.Template.Labels = rsclone.Labels
+	rsclone.Spec.Template.Labels = restorers.Labels
 	rsclone.Spec.Replicas = &desiredScale
-	_, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Update(rsclone)
+	patchJSON, err = createPatch(restorers, rsclone)
 	if err != nil {
-		m.logger.Errorf("Failed to restore target rs %s", rsclone.Name, zap.Error(err))
+		m.logger.Errorf("Failed to create patch: %+v", rsclone)
+		return err
+	}
+
+	m.logger.Infof("patch: %s", patchJSON)
+	_, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Patch(restorers.Name, types.JSONPatchType, patchJSON)
+	if err != nil {
+		m.logger.Errorf("Failed to restore target rs %s", restorers.Name, zap.Error(err))
 		return err
 	}
 
@@ -245,7 +274,7 @@ MigratePod:
 		m.logger.Errorf("Failed to update deployment %s: %v", dclone.Name, zap.Error(err))
 		return err
 	}
-	m.logger.Infof("Migration time = %d", time.Since(t)/time.Microsecond)
+	m.logger.Infof("Migration time = %d ms", time.Since(t)/time.Millisecond)
 
 	return nil
 }
@@ -267,4 +296,12 @@ func (m *migrator) updateStatus(desired *v1alpha1.PodAutoscaler) (*v1alpha1.PodA
 		//	return prClient.UpdateStatus(newKPA)
 	}
 	return kpa, nil
+}
+
+func createPatch(before, after interface{}) ([]byte, error) {
+	patch, err := duck.CreatePatch(before, after)
+	if err != nil {
+		return nil, err
+	}
+	return patch.MarshalJSON()
 }
