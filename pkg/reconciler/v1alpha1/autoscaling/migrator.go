@@ -170,9 +170,8 @@ MigratePod:
 			},
 		},
 	}
-	migratedScale += currentScale
 
-	targetrs.Spec.Replicas = &migratedScale
+	targetrs.Spec.Replicas = &desiredScale
 	targetrs.Spec.Selector = targetsel
 	targetrs.Spec.Template.Labels = map[string]string{
 		serving.FunctionLabelKey: f,
@@ -183,7 +182,6 @@ MigratePod:
 		return err
 	}
 
-	m.logger.Infof("patch: %s", patchJSON)
 	_, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Patch(targetrs.Name, types.JSONPatchType, patchJSON)
 	if err != nil {
 		m.logger.Errorf("Failed to patch target rs %s: %v", targetrs.Name, zap.Error(err))
@@ -193,7 +191,6 @@ MigratePod:
 	migratePodOpt := metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("%s=%s,pool!=true", serving.FunctionLabelKey, f),
 	}
-	m.logger.Infof("migratePodOpt selector: %s", migratePodOpt.LabelSelector)
 	migratePods, err := m.kubeClientSet.CoreV1().Pods(ns).List(migratePodOpt)
 	if err != nil {
 		m.logger.Errorf("Failed to list migrated pods", zap.Error(err))
@@ -250,7 +247,6 @@ MigratePod:
 		return err
 	}
 
-	m.logger.Infof("patch: %s", patchJSON)
 	_, err = m.kubeClientSet.ExtensionsV1beta1().ReplicaSets(ns).Patch(restorers.Name, types.JSONPatchType, patchJSON)
 	if err != nil {
 		m.logger.Errorf("Failed to restore target rs %s", restorers.Name, zap.Error(err))
